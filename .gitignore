@@ -1,0 +1,20 @@
+.venv/
+.cache/
+.libs/
+workspaces/*/
+!workspaces/.gitkeep
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.db
+session.flag
+active_workspace.json
+
+# Notas pessoais (ideias, insights, avanços de seção) — NUNCA sobem ao GitHub
+notas/
+
+# Pasta do agente Cursor — não faz parte do programa
+.cursor/
+*.swp
+.DS_Store
