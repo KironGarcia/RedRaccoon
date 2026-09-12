@@ -11,7 +11,7 @@ EDGE_B = 8
 LARGURA_JANELA = 600
 ALTURA_JANELA = 300
 LARGURA_MIN = 480
-ALTURA_MIN = 260
+ALTURA_MIN = 280
 MARGEM_DIREITA = 28
 MARGEM_INFERIOR = 56
 BORDA_RESIZE = 8
@@ -35,6 +35,11 @@ FONTE_ACEPT_CANCEL = 16
 FONTE_YES_NO = 20
 # Altura única da barra (box / seta / PAST alinhados)
 BARRA_CTRL_ALTURA = 44
+# Modo Mask / Redactor — cabem sob o avatar (caixa vermelha do sketch)
+# 1 mm ≈ 4 px @96dpi
+MODO_BTN_LARGURA = AVATAR_TAM - 6
+MODO_BTN_ALTURA = 22
+MODO_BTN_ESPACO = 4
 
 COR_FUNDO = "#1a1d24"
 COR_BARRA = "#12151a"
@@ -131,6 +136,47 @@ QPushButton#past:pressed {{
     background: #1a3a4a;
     border: 1px solid #254f63;
     padding-top: 2px;
+    color: #d0d8de;
+}}
+QPushButton#modo {{
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #2f6880,
+        stop:0.5 #254f63,
+        stop:1 #1a3a4a
+    );
+    color: #e8eef2;
+    border: 1px solid #3a7a96;
+    border-radius: 6px;
+    font-weight: 400;
+    font-size: 14px;
+    letter-spacing: 0px;
+    padding: 0px 4px;
+}}
+QPushButton#modo:hover {{
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #3a7a96,
+        stop:0.5 #2f6880,
+        stop:1 #254f63
+    );
+    border: 1px solid #4a8fb0;
+    color: #ffffff;
+}}
+QPushButton#modo:checked {{
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #3a7a96,
+        stop:0.5 #2f6880,
+        stop:1 #254f63
+    );
+    border: 1px solid #5ec8f0;
+    color: #ffffff;
+}}
+QPushButton#modo:pressed {{
+    background: #1a3a4a;
+    border: 1px solid #254f63;
+    padding-top: 1px;
     color: #d0d8de;
 }}
 QPushButton#send {{

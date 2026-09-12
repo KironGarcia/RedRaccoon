@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,73 @@ RE_PLACEHOLDER = re.compile(
     r"|TARGET_[A-Z]+_\d+"
     r")\b"
 )
+
+
+def _tipo_placeholder(chave: str) -> str:
+    """TARGET_IP_1 → IP; PERSON_1 → PERSON — rótulo da tabela."""
+    u = (chave or "").upper()
+    if u.startswith("CLIENT_NAME"):
+        return "ORG"
+    if u.startswith("PERSON_"):
+        return "PERSON"
+    m = re.match(r"TARGET_([A-Z]+)_\d+$", u)
+    if m:
+        return m.group(1)
+    return "OTHER"
+
+
+@dataclass
+class ResultadoReconstruct:
+    """Rodada de relatório: texto reconstruído + resumo (não persiste mapa novo)."""
+
+    texto_original: str
+    texto_reconstruido: str
+    resumo: list[dict] = field(default_factory=list)
+    nao_mapeados: list[str] = field(default_factory=list)
+
+    @property
+    def teve_troca(self) -> bool:
+        return any(int(r.get("times") or 0) > 0 for r in self.resumo)
+
+
+def reconstruir_relatorio(
+    texto: str, repo: Any, engagement_id: int
+) -> ResultadoReconstruct:
+    """Clipboard de relatório → placeholders conhecidos viram valor real."""
+    original = texto or ""
+    mapa = mapa_placeholders(repo, engagement_id)
+    achados = RE_PLACEHOLDER.findall(original)
+    ordem: list[str] = []
+    vistos: set[str] = set()
+    for ph in achados:
+        if ph not in vistos:
+            vistos.add(ph)
+            ordem.append(ph)
+
+    resumo: list[dict] = []
+    nao_mapeados: list[str] = []
+    for ph in ordem:
+        n = original.count(ph)
+        real = mapa.get(ph)
+        if real is None:
+            nao_mapeados.append(ph)
+            continue
+        resumo.append(
+            {
+                "type": _tipo_placeholder(ph),
+                "placeholder": ph,
+                "real": real,
+                "times": n,
+            }
+        )
+
+    novo = reconstruir_texto(original, mapa) if mapa else original
+    return ResultadoReconstruct(
+        texto_original=original,
+        texto_reconstruido=novo,
+        resumo=resumo,
+        nao_mapeados=nao_mapeados,
+    )
 
 
 def mapa_placeholders(repo: Any, engagement_id: int) -> dict[str, str]:

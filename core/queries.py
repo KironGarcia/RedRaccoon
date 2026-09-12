@@ -16,6 +16,8 @@ from core.reconstruct import RE_PLACEHOLDER
 
 # Lista confidencial grande cabe aqui; scan continua só via PAST INPUT
 LIMITE_CHARS = 4000
+# No Redactor, texto longo no Questions → PAST REPORT (não cabe hallazgo aqui)
+LIMITE_QUESTIONS_REDACTOR = 220
 # Muitas linhas sem ip=/host=/… → trata como tool output colado por engano
 LINHAS_SUSPEITAS_SCAN = 8
 
@@ -62,6 +64,19 @@ RE_REVEAL = re.compile(r"(?is)^(?:reveal|decode|real)\s+(.+)$")
 # Calibração no preview: falso positivo / fuga
 RE_ALLOWED = re.compile(r"(?is)^allowed\s*=\s*(.+)$")
 RE_BLOCKED = re.compile(r"(?is)^blocked\s*=\s*(.+)$")
+RE_IPV4_LEVE = re.compile(
+    r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
+)
+# Pedido de “melhorar o texto” — Redactor não é LLM
+RE_PEDIDO_LLM = re.compile(
+    r"(?i)\b("
+    r"improve|rewrite|rephrase|polish|paraphrase|"
+    r"fix this|make (?:it |this )?(?:better|shorter|longer)|"
+    r"help me write|can you (?:write|edit|improve)|"
+    r"how (?:can|do) i|"
+    r"melhorar|reescrev|mejora(?:r)? esta"
+    r")\b"
+)
 
 
 class Intencao(Enum):
@@ -97,6 +112,34 @@ def _pedido_muito_longo(tamanho: int) -> PedidoQuery:
             "Split the confidential list or use PAST INPUT for scans."
         ),
     )
+
+
+def parece_scan_cru(texto: str) -> bool:
+    """
+    Tool output real (nmap etc.) sem placeholders.
+    Relatório mascarado que ainda diz “Nmap scan report” + TARGET_* NÃO entra aqui.
+    """
+    bruto = texto or ""
+    if RE_PLACEHOLDER.search(bruto):
+        return False
+    if RE_SCAN_FORTE.search(bruto):
+        return True
+    if bruto.count("\n") >= LINHAS_SUSPEITAS_SCAN and RE_IPV4_LEVE.search(bruto):
+        return True
+    return False
+
+
+def parece_pedido_llm(texto: str) -> bool:
+    return bool(RE_PEDIDO_LLM.search(texto or ""))
+
+
+def texto_longo_para_questions(texto: str) -> bool:
+    bruto = texto or ""
+    if len(bruto) > LIMITE_QUESTIONS_REDACTOR:
+        return True
+    if bruto.count("\n") >= 3:
+        return True
+    return False
 
 
 def validar_tamanho_e_anti_scan(texto: str) -> PedidoQuery | None:

@@ -3,7 +3,7 @@
 # Por quê: UI fala inglês; lógica de fluxo fica em window.py.
 
 MSG_WELCOME_NAME = (
-    "Hey. I'm Racoon-Mask — local confidentiality filter.\n"
+    "Hey. I'm RedRaccoon — local confidentiality filter.\n"
     "What is the workspace / engagement name?"
 )
 
@@ -20,6 +20,51 @@ MSG_CONFIDENTIAL_FORMAT = (
 )
 
 MSG_READY = "Ready to start — paste your first input to mask when you want."
+
+MSG_WELCOME_REDACTOR = (
+    "Redactor mode. Paste the report text with placeholders — "
+    "I'll put the real client values back.\n"
+    "I don't rewrite. I only reconstruct."
+)
+
+MSG_REDACTOR_SEM_ENG = (
+    "You picked Redactor, but I don't see an engagement yet.\n"
+    "I need a local map to restore real values.\n"
+    "Switch to Mask and start an engagement first."
+)
+
+MSG_REDACTOR_SCAN_CRU = (
+    "That looks like a raw scan, not a masked report.\n"
+    "In this mode I reconstruct placeholders — I don't sanitize.\n"
+    "Switch to Mask for that."
+)
+
+MSG_REDACTOR_SEM_PLACEHOLDER = (
+    "No placeholders to restore in that text.\n"
+    "Nothing copied. Clipboard unchanged."
+)
+
+MSG_REDACTOR_NO_LLM = (
+    "I'm just a raccoon — I don't rewrite or improve text.\n"
+    "Polish it with placeholders in your model of choice, "
+    "then I can reconstruct."
+)
+
+MSG_QUESTIONS_USE_PAST_REPORT = (
+    "Looks like a long text in this box.\n"
+    "Use the PAST REPORT button for that."
+)
+
+MSG_CLIPBOARD_EMPTY_REPORT = (
+    "Clipboard is empty. Copy the report text first, then PAST REPORT."
+)
+
+MSG_COPIED_REPORT = (
+    "Copied to clipboard.\n"
+    "That's the report with real values — wording untouched."
+)
+
+MSG_SETUP_THEN_PAST_REPORT = "Finish setup first, then use PAST REPORT."
 
 MSG_NO_SENSITIVE = (
     "No sensitive data found. Safe to share.\n"
@@ -135,6 +180,56 @@ def formatar_resumo(resumo: list[dict]) -> str:
         + MSG_CALIBRATION
         + "\nACEPT to copy / CANCEL to discard."
     )
+
+
+def formatar_resumo_reconstrucao(
+    resumo: list[dict], nao_mapeados: list[str]
+) -> str:
+    """Mesma tabela do Mask, invertida: placeholder → valor real."""
+    if not resumo and not nao_mapeados:
+        return MSG_REDACTOR_SEM_PLACEHOLDER
+
+    if not resumo and nao_mapeados:
+        extras = "\n".join(f"  • {p}" for p in nao_mapeados)
+        return (
+            "No real value in this engagement for:\n"
+            + extras
+            + "\nNothing copied. Clipboard unchanged."
+        )
+
+    ordenado = sorted(
+        resumo,
+        key=lambda r: (
+            _ORDEM_TIPO.get(str(r.get("type", "")).upper(), 99),
+            str(r.get("placeholder", "")),
+        ),
+    )
+
+    cab = (
+        f"{'type':<{_W_TIPO}} "
+        f"{'before':<{_W_BEFORE}} "
+        f"{'after':<{_W_AFTER}} "
+        f"{'times':>5}"
+    )
+    sep = "─" * len(cab)
+    linhas = [cab, sep]
+    for r in ordenado:
+        tipo = _corta(str(r.get("type", "?")).lower(), _W_TIPO)
+        before = _corta(str(r.get("placeholder", "")), _W_BEFORE)
+        after = _corta(str(r.get("real", "")), _W_AFTER)
+        n = int(r.get("times", 0) or 0)
+        linhas.append(
+            f"{tipo:<{_W_TIPO}} {before:<{_W_BEFORE}} {after:<{_W_AFTER}} {n:>5}"
+        )
+
+    corpo = "Reconstruction preview:\n" + "\n".join(linhas)
+    if nao_mapeados:
+        extras = "\n".join(f"  • {p}" for p in nao_mapeados)
+        corpo += (
+            "\n\nNo real value in this engagement for:\n" + extras
+        )
+    corpo += "\n\nACEPT to copy / CANCEL to discard."
+    return corpo
 
 
 def msg_old_workspace(nome: str) -> str:

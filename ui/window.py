@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QButtonGroup,
 )
 
 from core.queries import (
@@ -39,7 +40,11 @@ from core.queries import (
     executar_replace_md,
     executar_reveal,
     interpretar,
+    parece_pedido_llm,
+    parece_scan_cru,
+    texto_longo_para_questions,
 )
+from core.reconstruct import ResultadoReconstruct, reconstruir_relatorio
 from core.sanitize import ResultadoSanitize, Sanitizer
 from session import learning as learn
 from session import prefs as ui_prefs
@@ -57,7 +62,13 @@ class FaseUI(Enum):
     WIZARD_ITENS = auto()
     PRONTO = auto()
     PENDENTE_SANITIZE = auto()
+    PENDENTE_RECONSTRUCT = auto()
     BURN = auto()
+
+
+class ModoUI(Enum):
+    MASK = auto()
+    REDACTOR = auto()
 
 
 class RacoonWindow(QMainWindow):
@@ -68,7 +79,9 @@ class RacoonWindow(QMainWindow):
         self.life = Lifecycle()
         self.sanitizer = Sanitizer()
         self.fase = FaseUI.BOOT
+        self.modo = ModoUI.MASK
         self.pendente: ResultadoSanitize | None = None
+        self.pendente_recon: ResultadoReconstruct | None = None
         self._pasta_anterior: Path | None = None
         self._drag_pos: QPoint | None = None
         self._resize_edges: int = 0  # bitmask EDGE_L/R/T/B
@@ -129,6 +142,36 @@ class RacoonWindow(QMainWindow):
         # Pouco espaço avatar→cauda; cauda colada no balão
         topo.setSpacing(4)
         self.avatar = AvatarRacoon(T.AVATAR_TAM)
+        self.btn_mask = QPushButton("MASK")
+        self.btn_mask.setObjectName("modo")
+        self.btn_mask.setCheckable(True)
+        self.btn_mask.setChecked(True)
+        self.btn_mask.setFixedSize(T.MODO_BTN_LARGURA, T.MODO_BTN_ALTURA)
+        self.btn_mask.setFont(fonte_past(13))
+        self.btn_mask.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_mask.setToolTip("Mask mode — sanitize tool output")
+        self.btn_mask.clicked.connect(lambda: self._on_modo(ModoUI.MASK))
+        self.btn_redactor = QPushButton("REDACTOR")
+        self.btn_redactor.setObjectName("modo")
+        self.btn_redactor.setCheckable(True)
+        self.btn_redactor.setFixedSize(T.MODO_BTN_LARGURA, T.MODO_BTN_ALTURA)
+        self.btn_redactor.setFont(fonte_past(13))
+        self.btn_redactor.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_redactor.setToolTip("Redactor mode — restore real values in reports")
+        self.btn_redactor.clicked.connect(lambda: self._on_modo(ModoUI.REDACTOR))
+        self.grp_modo = QButtonGroup(self)
+        self.grp_modo.setExclusive(True)
+        self.grp_modo.addButton(self.btn_mask)
+        self.grp_modo.addButton(self.btn_redactor)
+
+        col_avatar = QVBoxLayout()
+        col_avatar.setContentsMargins(0, 0, 0, 0)
+        col_avatar.setSpacing(T.MODO_BTN_ESPACO)
+        col_avatar.addWidget(self.avatar, 0, Qt.AlignmentFlag.AlignHCenter)
+        col_avatar.addWidget(self.btn_mask, 0, Qt.AlignmentFlag.AlignHCenter)
+        col_avatar.addWidget(self.btn_redactor, 0, Qt.AlignmentFlag.AlignHCenter)
+        col_avatar.addStretch(1)
+
         self.lbl_balao = QTextEdit()
         self.lbl_balao.setObjectName("balao")
         self.lbl_balao.setReadOnly(True)
@@ -156,7 +199,8 @@ class RacoonWindow(QMainWindow):
         balao_row.addLayout(cauda_col)
         balao_row.addWidget(self.lbl_balao, 1)
 
-        topo.addWidget(self.avatar, 0, Qt.AlignmentFlag.AlignTop)
+        topo.addLayout(col_avatar, 0)
+        topo.setAlignment(col_avatar, Qt.AlignmentFlag.AlignTop)
         topo.addLayout(balao_row, 1)
         topo.addSpacing(T.MARGEM_BALAO_DIR)
         col.addLayout(topo, 1)
@@ -349,6 +393,7 @@ class RacoonWindow(QMainWindow):
             "fechar",
             "questions",
             "balao",
+            "modo",
         }
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
@@ -453,6 +498,79 @@ class RacoonWindow(QMainWindow):
         eng["allow_list"] = fundidos
         return eng
 
+    def _eng_pronto(self) -> bool:
+        """Wizard fechado + sessão com engagement — mapa local existe."""
+        if self.fase not in (
+            FaseUI.PRONTO,
+            FaseUI.PENDENTE_SANITIZE,
+            FaseUI.PENDENTE_RECONSTRUCT,
+        ):
+            return False
+        return self.life.sessao is not None and self._eng() is not None
+
+    def _descartar_pendentes(self) -> None:
+        """Troca de modo / novo PAST — não deixa rascunho órfão."""
+        if self.fase == FaseUI.PENDENTE_SANITIZE and self.pendente:
+            if self.pendente.teve_sensivel and self.life.sessao:
+                self.sanitizer.descartar_rodada(
+                    self.life.sessao.repo, self.pendente
+                )
+        self.pendente = None
+        self.pendente_recon = None
+        if self.fase in (
+            FaseUI.PENDENTE_SANITIZE,
+            FaseUI.PENDENTE_RECONSTRUCT,
+        ):
+            self.fase = FaseUI.PRONTO
+
+    def _aplicar_chrome_modo(self) -> None:
+        """PAST muda de nome com o modo — o olho vê em que mundo está."""
+        mask = self.modo == ModoUI.MASK
+        self.btn_mask.setChecked(mask)
+        self.btn_redactor.setChecked(not mask)
+        if mask:
+            self.btn_past.setText("PAST INPUT")
+            self.btn_past.setToolTip(
+                "Paste scan / sensitive output from clipboard"
+            )
+        else:
+            self.btn_past.setText("PAST REPORT")
+            self.btn_past.setToolTip(
+                "Paste masked report text — restore real client values"
+            )
+
+    def _fala_mask_atual(self) -> None:
+        if self.fase == FaseUI.OLD_WORKSPACE:
+            nome = (
+                self.life.nome_anterior(self._pasta_anterior)
+                if self._pasta_anterior
+                else ""
+            )
+            self._falar(D.msg_old_workspace(nome), mostrar_decisao=True)
+            return
+        if self.fase == FaseUI.WIZARD_ITENS:
+            self._falar(D.MSG_CONFIDENTIAL_FORMAT)
+            return
+        if self.fase == FaseUI.PRONTO:
+            self._falar(D.MSG_READY)
+            return
+        self._falar(D.MSG_WELCOME_NAME)
+
+    def _on_modo(self, modo: ModoUI) -> None:
+        if self.fase == FaseUI.BURN:
+            self._aplicar_chrome_modo()
+            return
+        self._descartar_pendentes()
+        self.modo = modo
+        self._aplicar_chrome_modo()
+        if modo == ModoUI.MASK:
+            self._fala_mask_atual()
+            return
+        if not self._eng_pronto():
+            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            return
+        self._falar(D.MSG_WELCOME_REDACTOR)
+
     # ------------------------------------------------------------------
     # Eventos
     # ------------------------------------------------------------------
@@ -480,6 +598,9 @@ class RacoonWindow(QMainWindow):
         if self.fase == FaseUI.BURN:
             self._tratar_burn_texto(texto)
             return
+        if self.modo == ModoUI.REDACTOR and not self._eng_pronto():
+            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            return
         if self.fase == FaseUI.OLD_WORKSPACE:
             self._falar(
                 D.msg_old_workspace(
@@ -499,6 +620,12 @@ class RacoonWindow(QMainWindow):
         if self.fase == FaseUI.PENDENTE_SANITIZE:
             self._tratar_calibracao_pendente(texto)
             return
+        if self.fase == FaseUI.PENDENTE_RECONSTRUCT:
+            self._falar(
+                "Decide with ACEPT or CANCEL.",
+                mostrar_decisao=True,
+            )
+            return
         if self.fase == FaseUI.PRONTO:
             self._tratar_questions(texto)
 
@@ -511,6 +638,9 @@ class RacoonWindow(QMainWindow):
             return
         if self.fase == FaseUI.PENDENTE_SANITIZE and self.pendente:
             self._acept_sanitize()
+            return
+        if self.fase == FaseUI.PENDENTE_RECONSTRUCT and self.pendente_recon:
+            self._acept_reconstruir()
 
     def _on_cancel(self) -> None:
         if self.fase == FaseUI.BURN:
@@ -521,6 +651,9 @@ class RacoonWindow(QMainWindow):
             return
         if self.fase == FaseUI.PENDENTE_SANITIZE and self.pendente:
             self._cancel_sanitize()
+            return
+        if self.fase == FaseUI.PENDENTE_RECONSTRUCT and self.pendente_recon:
+            self._cancel_reconstruir()
 
     def _continuar_anterior(self) -> None:
         pasta = self._pasta_anterior
@@ -532,7 +665,10 @@ class RacoonWindow(QMainWindow):
         self._pasta_anterior = None
         if sess:
             self.fase = FaseUI.PRONTO
-            self._falar(D.MSG_RETAINED_REOPEN)
+            if self.modo == ModoUI.REDACTOR:
+                self._falar(D.MSG_WELCOME_REDACTOR)
+            else:
+                self._falar(D.MSG_RETAINED_REOPEN)
         else:
             self.life.queimar_anterior_e_limpar()
             self.fase = FaseUI.WIZARD_NOME
@@ -559,6 +695,9 @@ class RacoonWindow(QMainWindow):
 
     def _on_past_input(self) -> None:
         self._feedback_past_click()
+        if self.modo == ModoUI.REDACTOR:
+            self._on_past_report()
+            return
         # PAST INPUT livre quantas vezes quiser após o eng pronto
         # (também com rodada pendente — a nova substitui a anterior).
         if self.fase not in (FaseUI.PRONTO, FaseUI.PENDENTE_SANITIZE):
@@ -719,6 +858,83 @@ class RacoonWindow(QMainWindow):
         self.fase = FaseUI.PRONTO
         self._falar(D.MSG_CANCELLED)
 
+    def _on_past_report(self) -> None:
+        """Clipboard de relatório → preview invertido; ACEPT copia o real."""
+        if not self._eng_pronto():
+            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            return
+        if self.fase not in (
+            FaseUI.PRONTO,
+            FaseUI.PENDENTE_SANITIZE,
+            FaseUI.PENDENTE_RECONSTRUCT,
+        ):
+            self._falar(D.MSG_SETUP_THEN_PAST_REPORT)
+            return
+        if not self.life.sessao:
+            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            return
+        try:
+            bruto = pyperclip.paste() or ""
+        except Exception:
+            bruto = ""
+        if not bruto.strip():
+            self._falar(D.MSG_CLIPBOARD_EMPTY_REPORT)
+            return
+
+        if parece_scan_cru(bruto):
+            self._descartar_pendentes()
+            self._falar(D.MSG_REDACTOR_SCAN_CRU)
+            return
+
+        self._descartar_pendentes()
+        self.avatar.pensar()
+        resultado = reconstruir_relatorio(
+            bruto,
+            self.life.sessao.repo,
+            self.life.sessao.engagement_id,
+        )
+        if not resultado.teve_troca and not resultado.nao_mapeados:
+            self._falar(D.MSG_REDACTOR_SEM_PLACEHOLDER)
+            return
+
+        self.pendente_recon = resultado
+        self.fase = FaseUI.PENDENTE_RECONSTRUCT
+        self._falar(
+            D.formatar_resumo_reconstrucao(
+                resultado.resumo, resultado.nao_mapeados
+            ),
+            mostrar_decisao=True,
+        )
+
+    def _acept_reconstruir(self) -> None:
+        assert self.pendente_recon and self.life.sessao
+        r = self.pendente_recon
+        if not r.teve_troca:
+            self.pendente_recon = None
+            self.fase = FaseUI.PRONTO
+            self._falar(D.MSG_REDACTOR_SEM_PLACEHOLDER)
+            return
+        try:
+            pyperclip.copy(r.texto_reconstruido)
+        except Exception:
+            self._falar("Could not write clipboard. Round discarded.")
+            self.pendente_recon = None
+            self.fase = FaseUI.PRONTO
+            return
+        self.life.sessao.repo.registrar_log(
+            self.life.sessao.engagement_id,
+            "reconstruct",
+            len(r.resumo),
+        )
+        self.pendente_recon = None
+        self.fase = FaseUI.PRONTO
+        self._falar(D.MSG_COPIED_REPORT)
+
+    def _cancel_reconstruir(self) -> None:
+        self.pendente_recon = None
+        self.fase = FaseUI.PRONTO
+        self._falar(D.MSG_CANCELLED)
+
     # ------------------------------------------------------------------
     # Wizard / questions / burn
     # ------------------------------------------------------------------
@@ -765,6 +981,10 @@ class RacoonWindow(QMainWindow):
 
         # Pergunta no box → mesma animação (uma passagem), depois pausa no normal
         self.avatar.pensar()
+
+        if self.modo == ModoUI.REDACTOR:
+            self._tratar_questions_redactor(texto)
+            return
 
         pedido = interpretar(texto)
         if pedido.intencao in (Intencao.RECUSAR_SCAN, Intencao.MUITO_LONGO):
@@ -826,6 +1046,44 @@ class RacoonWindow(QMainWindow):
             "lookup PLACEHOLDER, reveal <cmd>, replace file.md — "
             "or PAST INPUT."
         )
+
+    def _tratar_questions_redactor(self, texto: str) -> None:
+        """Redactor: reconstruct via PAST REPORT. Questions só lookup curto / recusas."""
+        if not self._eng_pronto():
+            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            return
+        if texto_longo_para_questions(texto):
+            self._falar(D.MSG_QUESTIONS_USE_PAST_REPORT)
+            return
+        if parece_pedido_llm(texto):
+            self._falar(D.MSG_REDACTOR_NO_LLM)
+            return
+        pedido = interpretar(texto)
+        if pedido.intencao == Intencao.LOOKUP:
+            self._falar(
+                executar_lookup(
+                    self.life.sessao.repo,
+                    self.life.sessao.engagement_id,
+                    pedido.placeholder,
+                )
+            )
+            return
+        if pedido.intencao == Intencao.REPLACE_MD:
+            self._falar(
+                executar_replace_md(
+                    self.life.sessao.repo,
+                    self.life.sessao.engagement_id,
+                    pedido.caminho,
+                )
+            )
+            return
+        if pedido.intencao == Intencao.REVEAL_TEXTO:
+            self._falar(D.MSG_QUESTIONS_USE_PAST_REPORT)
+            return
+        if pedido.intencao in (Intencao.RECUSAR_SCAN, Intencao.MUITO_LONGO):
+            self._falar(D.MSG_QUESTIONS_USE_PAST_REPORT)
+            return
+        self._falar(D.MSG_REDACTOR_NO_LLM)
 
     def _tratar_burn_texto(self, texto: str) -> None:
         t = texto.strip().upper()
