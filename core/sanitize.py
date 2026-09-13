@@ -41,6 +41,8 @@ RE_FQDN = re.compile(
 RE_CNPJ = re.compile(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b")
 # Telefone E.164 (whois Registrant Phone: +55.8199…)
 RE_PHONE = re.compile(r"\+\d{1,3}[.\s-]?\d{6,14}\b")
+# Telefone BR formatado (DD NNNN-NNNN / DDDD NNNNN-NNNN) — evita CEP whois (sem espaço)
+RE_PHONE_BR = re.compile(r"\b\d{2}\s\d{4,5}-\d{4}\b")
 # Whois ICANN: rua / CEP — rótulo da tool, valor é PII
 RE_WHOIS_STREET = re.compile(r"(?im)^Registrant Street:\s*(.+?)\s*$")
 RE_WHOIS_POSTAL = re.compile(r"(?im)^Registrant Postal Code:\s*(\S+)\s*$")
@@ -273,6 +275,31 @@ RE_META_AUTHOR_NOME = re.compile(
 # openssl subject: ST = Pernambuco (estado no cert, não PERSON)
 RE_CERT_ST = re.compile(
     r"\bST\s*=\s*([A-Za-z][A-Za-z ]{1,40}?)(?=,|\s*$)"
+)
+# openssl subject: ST = SP / ST=RJ (UF 2 letras — Presidio → ORG)
+RE_CERT_ST_UF = re.compile(r"(?i)\bST\s*=\s*[A-Za-z]{2}\b")
+# openssl subject: L = <cidade> / localityName= (cidade no cert → ADDRESS)
+RE_CERT_L = re.compile(
+    r"(?i)\b(?:L|localityName)\s*=\s*"
+    r"([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'\-]{1,60}?)(?=,|\s*$)"
+)
+# HTML <meta name="author" content="Nome"> (e attrs invertidos)
+RE_HTML_META_AUTHOR = re.compile(
+    r"""(?is)<meta\b[^>]*\bname\s*=\s*['"]author['"][^>]*\bcontent\s*=\s*['"]([^'"]{3,80})['"]"""
+    r"""|<meta\b[^>]*\bcontent\s*=\s*['"]([^'"]{3,80})['"][^>]*\bname\s*=\s*['"]author['"]"""
+)
+# Set-Cookie / Cookie: Name=value — mascara só o VALUE (session-like ou header)
+RE_SET_COOKIE_PAIR = re.compile(
+    r"(?im)(?:(?:^|[\r\n])\s*(?:Set-Cookie|Cookie)\s*:\s*|;\s*)"
+    r"([A-Za-z0-9_.-]+)=([A-Za-z0-9._-]{8,})"
+)
+# Session cookie name=value em qualquer contexto (VALUE only)
+RE_SESSION_COOKIE_PAIR = re.compile(
+    r"(?i)\b([A-Za-z0-9_.-]*(?:SESS(?:ION|ID)|_SESSION)[A-Za-z0-9_.-]*)="
+    r"([A-Za-z0-9._-]{8,})"
+)
+RE_COOKIE_SESSION_NAME = re.compile(
+    r"(?i)(?:SESS(?:ION|ID)|_SESSION)"
 )
 RE_NOME_LISTA_CARGO = re.compile(
     r"(?m)^[ \t]*"
@@ -679,6 +706,13 @@ ALLOW_TECNICO = re.compile(
     r"|SQL\s+Service|Web\s+App|KDC|ropnop"
     # nmap ssl/smtp + WhatWeb (rótulos, não cliente)
     r"|Colaborador|Issuer|Public\s+Key|Meta-Author"
+    # OpenSSL x509v3 / EKU jargon (Presidio confunde com PERSON)
+    r"|X509v3|Key\s+Usage|Extended\s+Key\s+Usage"
+    r"|TLS\s+Web\s+Client\s+Authentication|TLS\s+Web\s+Server\s+Authentication"
+    r"|Digital\s+Signature|Key\s+Encipherment|Subject\s+Alternative\s+Name"
+    r"|Authority\s+Key\s+Identifier|Basic\s+Constraints|CA\s+Issuers"
+    r"|Subject\s+Public\s+Key\s+Info|Signature\s+Algorithm|Public\s+Key\s+Algorithm"
+    r"|rsaEncryption|sha256WithRSAEncryption"
     r"|UncommonHeaders|HTTPServer|PasswordField|HTML5"
     r"|Strict-Transport-Security|X-Powered-By|X-Internal-Host"
     r"|OpenVPN|GlobalProtect|Palo\s+Alto|Let's\s+Encrypt"
@@ -1086,6 +1120,9 @@ class Sanitizer:
         # CEP BR (00000-000) — PII de whois, não é ruído
         if re.fullmatch(r"\d{5}-\d{3}", v):
             return False
+        # Telefone BR (DD NNNN-NNNN / DD NNNNN-NNNN) — PII, não é ruído
+        if re.fullmatch(r"\d{2}\s\d{4,5}-\d{4}", v):
+            return False
         if RE_LIXO.match(v):
             return True
         # Box-drawing / arte de terminal
@@ -1115,7 +1152,7 @@ class Sanitizer:
         if tipo == "EMAIL":
             return "@" in valor and len(valor) >= MIN_CHARS_MAPEAVEL
         if tipo == "APIKEY":
-            return len(valor) >= 12
+            return len(valor) >= 8
         if tipo == "USER":
             return 3 <= len(valor) <= 32
         if tipo == "PASSWORD":
@@ -1531,6 +1568,9 @@ class Sanitizer:
             _considerar(m.group(1))
         for m in RE_META_AUTHOR_NOME.finditer(texto):
             _considerar(m.group(1))
+        for m in RE_HTML_META_AUTHOR.finditer(texto):
+            nome = (m.group(1) or m.group(2) or "").strip()
+            _considerar(nome)
         return achados
 
     def _achados_sids(self, texto: str) -> list[Achado]:
@@ -1572,7 +1612,20 @@ class Sanitizer:
             achados.append(
                 Achado(m.group(), "PHONE", m.start(), m.end(), "regex")
             )
+        for m in RE_PHONE_BR.finditer(texto):
+            achados.append(
+                Achado(m.group(), "PHONE", m.start(), m.end(), "regex")
+            )
         for m in RE_CERT_ST.finditer(texto):
+            val = m.group(1).strip()
+            # UF genérica de 2 letras (SP, RJ…) — não mascarar
+            if val and re.fullmatch(r"[A-Za-z]{2}", val):
+                continue
+            if val and val.lower() not in {"br", "us", "uk", "n/a"}:
+                achados.append(
+                    Achado(val, "ADDRESS", m.start(1), m.end(1), "regex")
+                )
+        for m in RE_CERT_L.finditer(texto):
             val = m.group(1).strip()
             if val and val.lower() not in {"br", "us", "uk", "n/a"}:
                 achados.append(
@@ -1630,6 +1683,13 @@ class Sanitizer:
                             local, "USER", m.start(), m.start() + len(local), "regex"
                         )
                     )
+                elif self._token_mapeavel(email, "EMAIL"):
+                    # Local curto (falha gate USER) —
+                    # mascara o endereço inteiro como EMAIL
+                    achados.append(
+                        Achado(email, "EMAIL", m.start(), m.end(), "regex")
+                    )
+                    continue
                 if dominio and not self._dominio_publico(dominio):
                     achados.append(
                         Achado(
@@ -1666,6 +1726,32 @@ class Sanitizer:
             achados.append(
                 Achado(segredo, "APIKEY", start, start + len(segredo), "regex")
             )
+        # Cookie values (Set-Cookie / Cookie) — mascara VALUE, nunca o Name allow
+        vistos_cookie: set[tuple[int, int]] = set()
+
+        def _add_cookie_valor(nome: str, valor: str, start: int, end: int) -> None:
+            if (start, end) in vistos_cookie:
+                return
+            if not valor or len(valor) < 8:
+                return
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", valor):
+                return
+            if not self._token_mapeavel(valor, "APIKEY"):
+                return
+            # Não mascarar o Name (ex.: *SESSID no allow) — só o value
+            vistos_cookie.add((start, end))
+            achados.append(Achado(valor, "APIKEY", start, end, "regex"))
+
+        for m in RE_SET_COOKIE_PAIR.finditer(texto):
+            nome, valor = m.group(1), m.group(2)
+            janela = texto[max(0, m.start() - 48) : m.start()]
+            em_hdr = bool(
+                re.search(r"(?i)(?:set-cookie|cookie)\s*:\s*[^\r\n]*$", janela)
+            )
+            if RE_COOKIE_SESSION_NAME.search(nome) or em_hdr:
+                _add_cookie_valor(nome, valor, m.start(2), m.end(2))
+        for m in RE_SESSION_COOKIE_PAIR.finditer(texto):
+            _add_cookie_valor(m.group(1), m.group(2), m.start(2), m.end(2))
         # Domínios livres: NÃO varrer a internet inteira.
         # Só reforça: TLD interno OU FQDN do scope (inclui .br do cliente).
         for m in RE_FQDN.finditer(texto):
@@ -1752,6 +1838,16 @@ class Sanitizer:
             trecho = texto[r.start : r.end].strip()
             if not trecho or self._eh_lixo(trecho):
                 continue
+            # openssl: ST = XX (UF) — Presidio confunde com ORG/CLIENT_NAME
+            if RE_CERT_ST_UF.search(trecho):
+                continue
+            # Presidio às vezes retorna só o código de 2 letras no span ST = XX
+            if re.fullmatch(r"[A-Za-z]{2}", trecho):
+                janela = texto[max(0, r.start - 8) : min(len(texto), r.end + 1)]
+                if re.search(
+                    rf"(?i)\bST\s*=\s*{re.escape(trecho)}\b", janela
+                ):
+                    continue
             # NER não pode atravessar linha (whois Name + Organization)
             if "\n" in trecho:
                 continue
@@ -1947,7 +2043,11 @@ class Sanitizer:
         fundidos = [
             a
             for a in self._merge(camada1 + camada2 + camada3)
-            if not self._eh_lixo(a.real_value)
+            # PHONE/ID/IP: PII estruturado (pode ser só dígitos) — não é lixo
+            if (
+                a.entity_type in {"PHONE", "ID", "IP"}
+                or not self._eh_lixo(a.real_value)
+            )
             and (
                 a.camada == "blocklist"
                 or a.entity_type in {"USER", "PASSWORD", "EMAIL", "APIKEY"}
