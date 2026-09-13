@@ -348,6 +348,39 @@ F1 oficial da Fase 5 permanece **~68%**.
 
 ---
 
-## Fases 6+ — pendentes
+## Fase 6 — Post-exploitation
 
-Post-ex e relatório ainda não corridos neste eng.
+Ferramentas: **mysql** · **helm** · **GitLab CI vars**
+
+### 6.4 Benchmark oficial — 1ª cola
+
+| Tool | Cobertura | Precisão | F1 |
+|------|-----------|----------|-----|
+| mysql | ~70% | ~100% | **~70%** |
+| helm | ~57% | ~100% | **~70%** |
+| CI vars | ~83% | ~83% | **~77%** |
+| **Fase 6 (oficial)** | | | **~72%** |
+
+### 6.5 Fixes (não é benchmark)
+
+| Erro | Onde | Correção |
+|------|------|----------|
+| mysql `-u`/`-p`/db | `sanitize.py` | CLI USER/PASS/ID |
+| `.gitlab-ci.yml` → ORG | `sanitize.py` | skip `*.yml`/`*.yaml` |
+| `-n` / KUBE_NAMESPACE / helm release | `sanitize.py` | ID coined |
+| path slug | workspace | `blocked=` |
+
+### 6.6 Reteste (nota — não oficial)
+
+| Tool | Reteste |
+|------|---------|
+| mysql | fechou |
+| helm | fechou |
+| CI vars | fechou |
+
+F1 oficial da Fase 6 permanece **~72%**.
+
+---
+
+## Fechamento — Redactor (pendente neste slice até ACEPT+PAST REPORT)
+

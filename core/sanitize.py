@@ -297,6 +297,70 @@ RE_CLI_PASSWORD = re.compile(
     r"--ldappassword|--ldap-password)\s+"
     r"(?:'([^']+)'|\"([^\"]+)\"|(\S+))"
 )
+# mysql CLI: -u USER (só linha mysql — não gobuster -u URL)
+RE_MYSQL_CLI_USER = re.compile(
+    r"(?im)^(?:\$\s*)?mysql\b.*?(?<![A-Za-z0-9])-u\s*"
+    r"(?:'([^']+)'|\"([^\"]+)\"|([A-Za-z][A-Za-z0-9._-]{2,32}))"
+)
+# mysql CLI: -p'PASS' / -p"PASS" / -pPASS (sem espaço; -p sozinho = prompt)
+RE_MYSQL_CLI_PASSWORD = re.compile(
+    r"(?im)^(?:\$\s*)?mysql\b.*?(?<![A-Za-z0-9])-p"
+    r"(?:'([^']+)'|\"([^\"]+)\"|(?=\S)([^\s]+))"
+)
+# mysql CLI: DB positional antes de -e / EOL (alnum/_ coined; não come "mysql")
+RE_MYSQL_CLI_DATABASE = re.compile(
+    r"(?im)^(?:\$\s*)?mysql\b.*?"
+    r"(?<![A-Za-z0-9_=\-/.])([A-Za-z][A-Za-z0-9_]{3,64})"
+    r"(?=\s+(?:-e|--execute)\b|\s*$)"
+)
+MYSQL_DB_BUILTIN = {
+    "mysql",
+    "information_schema",
+    "performance_schema",
+    "sys",
+    "test",
+}
+# KUBE_NAMESPACE= / KUBE_NAMESPACE: — valor coined com hífen (.env ou YAML)
+RE_KUBE_NAMESPACE_ASSIGN = re.compile(
+    r"(?im)^[ \t]*[A-Z][A-Z0-9_]*(?:NAMESPACE|_NS)\s*[:=]\s*"
+    r"([A-Za-z0-9][A-Za-z0-9-]{3,80})\s*$"
+)
+# kubectl/helm: -n / --namespace NS (também dentro de aspas no script)
+RE_KUBE_NS_FLAG = re.compile(
+    r"(?i)(?:^|[\s])(?:-n|--namespace)\s+"
+    r"([A-Za-z0-9][A-Za-z0-9-]{3,80})(?=[\s'\"]|$)"
+)
+KUBE_NS_GENERIC = {
+    "default",
+    "kube-system",
+    "kube-public",
+    "kube-node-lease",
+    "prod",
+    "staging",
+    "dev",
+    "test",
+    "production",
+    "development",
+}
+# helm get values|upgrade|install … RELEASE (1º arg coined)
+RE_HELM_RELEASE = re.compile(
+    r"(?i)\bhelm\s+(?:get\s+values|upgrade|install|status|rollback|"
+    r"history|uninstall|delete)\s+"
+    r"([A-Za-z0-9][A-Za-z0-9-]{3,80})\b"
+)
+HELM_RELEASE_GENERIC = {
+    "nginx",
+    "mysql",
+    "redis",
+    "postgres",
+    "postgresql",
+    "mongodb",
+    "ingress",
+    "cert-manager",
+    "traefik",
+    "prometheus",
+    "grafana",
+}
 # Rubeus: /credpassword:Pass /password:Pass
 RE_SLASH_FLAG_PASS = re.compile(
     r"(?i)/(?:credpassword|password|passwd|pass)\s*[:=]\s*"
@@ -1171,6 +1235,43 @@ class Sanitizer:
         return "ID"
 
     @staticmethod
+    def _parece_mysql_db_coined(valor: str) -> bool:
+        """DB positional no mysql CLI (alnum/_) — não builtins."""
+        v = (valor or "").strip()
+        if len(v) < 4:
+            return False
+        if v.casefold() in MYSQL_DB_BUILTIN:
+            return False
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{3,64}", v):
+            return False
+        if "_" in v:
+            return True
+        if v.islower() and len(v) >= 6:
+            return True
+        return False
+
+    @staticmethod
+    def _parece_kube_ns_coined(valor: str) -> bool:
+        """Namespace k8s coined (hífen, len>=4) — não default/kube-system/prod."""
+        v = (valor or "").strip()
+        if len(v) < 4 or "-" not in v:
+            return False
+        if v.casefold() in KUBE_NS_GENERIC:
+            return False
+        return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{3,80}", v))
+
+    @staticmethod
+    def _parece_helm_release_coined(valor: str) -> bool:
+        """Release helm coined (hífen) — não chart genérico nginx/mysql."""
+        v = (valor or "").strip()
+        if len(v) < 4 or "-" not in v:
+            return False
+        baixo = v.casefold()
+        if baixo in KUBE_NS_GENERIC or baixo in HELM_RELEASE_GENERIC:
+            return False
+        return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{3,80}", v))
+
+    @staticmethod
     def _eh_rotulo_http_ou_scan(valor: str) -> bool:
         """Rótulo de nmap/WhatWeb/HTTP — não é nome de cliente."""
         v = (valor or "").strip()
@@ -1215,8 +1316,16 @@ class Sanitizer:
 
     @staticmethod
     def _eh_prefixo_de_fqdn(texto: str, fim: int) -> bool:
-        """True se o match é só o label (NyxLynx) e o texto segue como host (.internal)."""
-        return 0 <= fim < len(texto) and texto[fim] == "."
+        """True se ORG/PERSON é só prefixo de FQDN (.internal) ou token composto (-/_)."""
+        if not (0 <= fim < len(texto)):
+            return False
+        c = texto[fim]
+        if c == ".":
+            return True
+        # vesperoak-prod / vesperoak_portal — deixa a classe ID/HOST pegar o token inteiro
+        if c in "-_" and fim + 1 < len(texto) and texto[fim + 1].isalnum():
+            return True
+        return False
 
     def _dominio_do_cliente(
         self, valor: str, eng: dict[str, Any] | None
@@ -1501,6 +1610,11 @@ class Sanitizer:
         for m in RE_ENV_USERNAME.finditer(texto):
             _add(m.group(1))
 
+        for m in RE_MYSQL_CLI_USER.finditer(texto):
+            u = next((g for g in m.groups() if g), None)
+            if u:
+                _add(u)
+
         # user@IP (app_user@10.x) — mascara local-part; IP já cai em RE_IPV4
         for m in RE_USER_AT_IP.finditer(texto):
             _add(m.group(1))
@@ -1565,6 +1679,11 @@ class Sanitizer:
             _add_senha(m.group(1))
 
         for m in RE_CLI_PASSWORD.finditer(texto):
+            bruto = next((g for g in m.groups() if g), None)
+            if bruto:
+                _add_senha(bruto)
+
+        for m in RE_MYSQL_CLI_PASSWORD.finditer(texto):
             bruto = next((g for g in m.groups() if g), None)
             if bruto:
                 _add_senha(bruto)
@@ -2038,6 +2157,53 @@ class Sanitizer:
                         "regex",
                     )
                 )
+        # mysql CLI: DB positional coined → ID
+        for m in RE_MYSQL_CLI_DATABASE.finditer(texto):
+            db = m.group(1)
+            if not self._parece_mysql_db_coined(db):
+                continue
+            if not self._token_mapeavel(db, "ID"):
+                continue
+            if self._na_allow_lista(db, eng) or ALLOW_TECNICO.search(db):
+                continue
+            achados.append(
+                Achado(db, "ID", m.start(1), m.end(1), "regex")
+            )
+        # KUBE_NAMESPACE= / -n NS coined → ID
+        for m in RE_KUBE_NAMESPACE_ASSIGN.finditer(texto):
+            ns = m.group(1)
+            if not self._parece_kube_ns_coined(ns):
+                continue
+            if not self._token_mapeavel(ns, "ID"):
+                continue
+            if self._na_allow_lista(ns, eng) or ALLOW_TECNICO.search(ns):
+                continue
+            achados.append(
+                Achado(ns, "ID", m.start(1), m.end(1), "regex")
+            )
+        for m in RE_KUBE_NS_FLAG.finditer(texto):
+            ns = m.group(1)
+            if not self._parece_kube_ns_coined(ns):
+                continue
+            if not self._token_mapeavel(ns, "ID"):
+                continue
+            if self._na_allow_lista(ns, eng) or ALLOW_TECNICO.search(ns):
+                continue
+            achados.append(
+                Achado(ns, "ID", m.start(1), m.end(1), "regex")
+            )
+        # helm get values|upgrade … RELEASE coined → ID
+        for m in RE_HELM_RELEASE.finditer(texto):
+            rel = m.group(1)
+            if not self._parece_helm_release_coined(rel):
+                continue
+            if not self._token_mapeavel(rel, "ID"):
+                continue
+            if self._na_allow_lista(rel, eng) or ALLOW_TECNICO.search(rel):
+                continue
+            achados.append(
+                Achado(rel, "ID", m.start(1), m.end(1), "regex")
+            )
         achados.extend(self._achados_usernames(texto, eng))
         achados.extend(self._achados_senhas(texto))
         achados.extend(self._achados_hashes_secrets(texto))
@@ -2173,6 +2339,16 @@ class Sanitizer:
                     continue
             # Presidio URL corta ticket.kirbi → ticket.ki (.ki = TLD); olha o token inteiro
             token_cheio = self._token_ao_redor(texto, r.start, r.end)
+            # .gitlab-ci.yml / *.yml|yaml — filename, não ORG/PERSON
+            if tipo in {"ORG", "PERSON"}:
+                baixo_tok = token_cheio.lower()
+                baixo_trecho = trecho.lower()
+                if baixo_tok.endswith((".yml", ".yaml")) or baixo_trecho.endswith(
+                    (".yml", ".yaml")
+                ):
+                    continue
+                if re.fullmatch(r"\.?[\w.-]+\.(?:yml|yaml)", baixo_tok):
+                    continue
             if tipo == "DOMAIN":
                 baixo_tok = token_cheio.lower()
                 if any(baixo_tok.endswith(ext) for ext in EXTENSOES_NAO_DOMINIO):
@@ -2413,9 +2589,9 @@ class Sanitizer:
             pholder = mapa_replace[real]
             if re.fullmatch(r"[A-Za-z0-9._$-]+", real):
                 if pholder.startswith("CLIENT_NAME"):
-                    # Marca colada (MareClaraPortal). Não come FQDN (nyxlynx.internal).
+                    # Marca colada (MareClaraPortal). Não come FQDN nem token-hífen.
                     texto_out = re.sub(
-                        rf"(?<![A-Za-z0-9_]){re.escape(real)}(?![a-z0-9_]|\.)",
+                        rf"(?<![A-Za-z0-9_]){re.escape(real)}(?![A-Za-z0-9_.-])",
                         pholder,
                         texto_out,
                         flags=re.IGNORECASE,
