@@ -272,6 +272,18 @@ RE_META_AUTHOR_NOME = re.compile(
     r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+"
     r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+){1,3})"
 )
+# WhatWeb: MetaGenerator[Org Product 1.2] — título Title Case (não o rótulo)
+RE_META_GENERATOR_TITLE = re.compile(
+    r"(?i)MetaGenerator\[\s*"
+    r"("
+    r"[A-ZÁÉÍÓÚÂÊÔÃÕÀ][A-Za-záéíóúâêôãõàç0-9]*"
+    r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÀ][A-Za-záéíóúâêôãõàç0-9]*)+"
+    r")"
+)
+# WWW-Authenticate: Bearer realm="slug-or-host"
+RE_WWW_AUTH_REALM = re.compile(
+    r"""(?i)\brealm\s*=\s*["']([A-Za-z0-9][A-Za-z0-9._-]{2,80})["']"""
+)
 # openssl subject: ST = Pernambuco (estado no cert, não PERSON)
 RE_CERT_ST = re.compile(
     r"\bST\s*=\s*([A-Za-z][A-Za-z ]{1,40}?)(?=,|\s*$)"
@@ -705,7 +717,9 @@ ALLOW_TECNICO = re.compile(
     r"|kerberoastable|outfile|creduser|credpassword|nowrap|Service\s+Accounts"
     r"|SQL\s+Service|Web\s+App|KDC|ropnop"
     # nmap ssl/smtp + WhatWeb (rótulos, não cliente)
-    r"|Colaborador|Issuer|Public\s+Key|Meta-Author"
+    r"|Colaborador|Issuer|Public\s+Key|Meta-Author|MetaGenerator"
+    r"|Bearer|GetRequest|Frame|Script"
+    r"|WWW-Authenticate|fingerprint-strings"
     # OpenSSL x509v3 / EKU jargon (Presidio confunde com PERSON)
     r"|X509v3|Key\s+Usage|Extended\s+Key\s+Usage"
     r"|TLS\s+Web\s+Client\s+Authentication|TLS\s+Web\s+Server\s+Authentication"
@@ -991,6 +1005,15 @@ class Sanitizer:
         return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]{2,32}", v))
 
     @staticmethod
+    def _parece_token_realm(valor: str) -> bool:
+        """realm= quoted slug (api-internal) — não palavra genérica sem hífen."""
+        v = (valor or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{2,80}", v):
+            return False
+        # Classe: token coined (hífen/ponto/underscore), não "restricted"/"api"
+        return bool(re.search(r"[-_.]", v))
+
+    @staticmethod
     def _parece_marca_ou_empresa(valor: str) -> bool:
         """Razão social / marca (MareClara, S.A., Ltda) — não é login nem pessoa."""
         v = (valor or "").strip()
@@ -1013,8 +1036,10 @@ class Sanitizer:
         if not v:
             return False
         if re.fullmatch(
-            r"(?i)WhatWeb|Meta-Author|UncommonHeaders|HTTPServer|"
+            r"(?i)WhatWeb|Meta-Author|MetaGenerator|UncommonHeaders|HTTPServer|"
             r"PasswordField|Issuer|Public\s+Key|Colaborador|"
+            r"Bearer|GetRequest|Frame|Script|"
+            r"WWW-Authenticate|fingerprint-strings|"
             r"VRFY|ETRN|STARTTLS|"
             r"Strict-Transport-Security|X-Powered-By|X-Internal-Host|"
             r"X-[A-Za-z0-9-]+|"
@@ -1038,10 +1063,13 @@ class Sanitizer:
 
     @staticmethod
     def _normalizar_span_dominio(valor: str) -> str:
-        """Tira *. e ponto à esquerda — senão *.nyxlynx.io vira *TARGET_DOMAIN."""
+        """Tira *. , ponto à esquerda e prefixo SMTP 250- — senão cola no host."""
         v = (valor or "").strip()
         v = re.sub(r"^\*\.", "", v)
-        return v.lstrip(".")
+        v = v.lstrip(".")
+        # EHLO multilinha: 250-mail.host.tld — código+hífen não é label DNS
+        v = re.sub(r"^\d{3}-", "", v)
+        return v
 
     @staticmethod
     def _eh_prefixo_de_fqdn(texto: str, fim: int) -> bool:
@@ -1752,6 +1780,35 @@ class Sanitizer:
                 _add_cookie_valor(nome, valor, m.start(2), m.end(2))
         for m in RE_SESSION_COOKIE_PAIR.finditer(texto):
             _add_cookie_valor(m.group(1), m.group(2), m.start(2), m.end(2))
+        # WWW-Authenticate realm="slug-or-host" — token de cliente, não o scheme
+        for m in RE_WWW_AUTH_REALM.finditer(texto):
+            realm = m.group(1)
+            if not self._parece_token_realm(realm):
+                continue
+            if self._na_allow_lista(realm, eng) or ALLOW_TECNICO.search(realm):
+                continue
+            tipo = "DOMAIN" if "." in realm else "HOST"
+            if tipo == "DOMAIN" and (
+                self._dominio_publico(realm) or not self._dominio_do_cliente(realm, eng)
+            ):
+                tipo = "HOST"
+            if not self._token_mapeavel(realm, tipo):
+                continue
+            achados.append(
+                Achado(realm, tipo, m.start(1), m.end(1), "regex")
+            )
+        # WhatWeb MetaGenerator[Title Case Product] — título inteiro (sem fragmento)
+        for m in RE_META_GENERATOR_TITLE.finditer(texto):
+            titulo = m.group(1).strip()
+            if not titulo or self._na_allow_lista(titulo, eng):
+                continue
+            if ALLOW_TECNICO.search(titulo) or self._eh_rotulo_http_ou_scan(titulo):
+                continue
+            if not self._token_mapeavel(titulo, "ORG"):
+                continue
+            achados.append(
+                Achado(titulo, "ORG", m.start(1), m.end(1), "regex")
+            )
         # Domínios livres: NÃO varrer a internet inteira.
         # Só reforça: TLD interno OU FQDN do scope (inclui .br do cliente).
         for m in RE_FQDN.finditer(texto):

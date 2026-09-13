@@ -196,6 +196,47 @@ F1 oficial da Fase 1 permanece **82%**.
 
 ---
 
-## Fases 2+ — não corridas neste slice
+## Fase 2 — Information Gathering ativo
 
-IG ativo, enum, vuln, exploit, post-ex e relatório **não** foram executados nesta missão (Mission 1 / Fase 1 only). Sem blocos, sem 1ª cola, sem fixes fora do escopo acima.
+Ferramentas: **nmap** (`-sV -sC`) · **WhatWeb** · **nc** (SMTP/VRFY)
+
+Blocos inventados em workspace local de teste (não commitados): `04-nmap.txt`, `05-whatweb.txt`, `06-nc-smtp.txt`.
+
+### 2.4 Benchmark oficial — 1ª cola
+
+| Tool | Cobertura | Precisão | F1 |
+|------|-----------|----------|-----|
+| nmap | ~80% | ~80% | **~80%** |
+| WhatWeb | ~85% | ~70% | **~77%** |
+| nc-smtp | ~95% | ~95% | **~95%** |
+| **Fase 2 (oficial)** | | | **~84%** |
+
+Vazou (nmap): coined `vesperoak-api` (realm) / filename; FPs: `Bearer`, `GetRequest`.
+WhatWeb FPs: `Frame`, `Script`; residual MetaGenerator.
+nc: engolia `250-` no domínio (rótulo/span).
+
+### 2.5 Fixes (não é benchmark)
+
+| Erro | Onde | Correção |
+|------|------|----------|
+| Bearer / GetRequest / Frame / Script | `sanitize.py` | `ALLOW_TECNICO` + rótulos de scan |
+| `250-mail…` como domínio | `sanitize.py` | `_normalizar_span_dominio` strip `\d{3}-` |
+| `realm="…"` | `sanitize.py` | valor quoted → HOST (classe) |
+| MetaGenerator Title-Case | `sanitize.py` | ORG do título completo |
+
+### 2.6 Reteste (nota — não oficial)
+
+| Tool | Reteste |
+|------|---------|
+| nmap | fechou — Bearer/GetRequest intactos; realm→HOST; IPs/domains/Ltda ok |
+| WhatWeb | fechou — Frame/Script intactos; MetaGenerator sem residual |
+| nc-smtp | fechou — `mail…` sem `250-`; VRFY/Postfix intactos |
+
+F1 oficial da Fase 2 permanece **~84%**.
+
+---
+
+## Fases 3+ — em curso / pendentes
+
+Enum, vuln, exploit, post-ex e relatório ainda não corridos neste eng.
+
