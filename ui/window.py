@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pyperclip
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt
 from PySide6.QtGui import (
     QCursor,
     QGuiApplication,
@@ -52,7 +52,7 @@ from session.lifecycle import Lifecycle
 from ui import dialogs as D
 from ui import theme as T
 from ui.fonts import fonte_past
-from ui.raccoon import AvatarRacoon, BotaoEnviar, CaudaBalao
+from ui.raccoon import AvatarRacoon, BotaoEnviar, CaudaBalao, icone_janela
 
 
 class FaseUI(Enum):
@@ -89,6 +89,7 @@ class RacoonWindow(QMainWindow):
         self._resize_geo: QRect | None = None
 
         self.setWindowTitle("Racoon-Mask")
+        self.setWindowIcon(icone_janela())
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMinimumSize(T.LARGURA_MIN, T.ALTURA_MIN)
@@ -219,8 +220,13 @@ class RacoonWindow(QMainWindow):
         self.btn_cancel.setObjectName("cancel")
         self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cancel.clicked.connect(self._on_cancel)
+        self.btn_back = QPushButton("BACK")
+        self.btn_back.setObjectName("voltar")
+        self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back.clicked.connect(self._on_back)
         acoes.addWidget(self.btn_acept)
         acoes.addWidget(self.btn_cancel)
+        acoes.addWidget(self.btn_back)
         acoes.addSpacing(T.MARGEM_BALAO_DIR)
         col.addWidget(acoes_bar, 0)
         self._mostrar_decisao(False)
@@ -315,9 +321,18 @@ class RacoonWindow(QMainWindow):
             }
         )
 
-    def _falar(self, texto: str, *, mostrar_decisao: bool = False) -> None:
+    def _falar(
+        self,
+        texto: str,
+        *,
+        mostrar_decisao: bool = False,
+        mostrar_voltar: bool = False,
+    ) -> None:
         self.lbl_balao.setPlainText(texto)
         self.lbl_balao.moveCursor(QTextCursor.MoveOperation.Start)
+        if mostrar_voltar:
+            self._mostrar_decisao(False, mostrar_voltar=True)
+            return
         if mostrar_decisao and self.fase == FaseUI.BURN:
             # Fechar app: YES/NO (scan continua com ACEPT/CANCEL)
             self._mostrar_decisao(True, rotulos=("YES", "NO"))
@@ -326,8 +341,16 @@ class RacoonWindow(QMainWindow):
         else:
             self._mostrar_decisao(False)
 
+    def _aviso_e_voltar(self, texto: str) -> None:
+        """Aviso de passo errado — BACK devolve o diálogo anterior."""
+        self._falar(texto, mostrar_voltar=True)
+
     def _mostrar_decisao(
-        self, visivel: bool, *, rotulos: tuple[str, str] = ("ACEPT", "CANCEL")
+        self,
+        visivel: bool,
+        *,
+        rotulos: tuple[str, str] = ("ACEPT", "CANCEL"),
+        mostrar_voltar: bool = False,
     ) -> None:
         self.btn_acept.setText(rotulos[0])
         self.btn_cancel.setText(rotulos[1])
@@ -336,11 +359,16 @@ class RacoonWindow(QMainWindow):
             px = T.FONTE_YES_NO
         else:
             px = T.FONTE_ACEPT_CANCEL
-        for btn in (self.btn_acept, self.btn_cancel):
+        for btn in (self.btn_acept, self.btn_cancel, self.btn_back):
             f = btn.font()
             f.setPixelSize(px)
             f.setBold(False)
             btn.setFont(f)
+        self.btn_back.setVisible(mostrar_voltar)
+        if mostrar_voltar:
+            self.btn_acept.setVisible(False)
+            self.btn_cancel.setVisible(False)
+            return
         self.btn_acept.setVisible(visivel)
         self.btn_cancel.setVisible(visivel)
 
@@ -388,6 +416,7 @@ class RacoonWindow(QMainWindow):
         return nome in {
             "acept",
             "cancel",
+            "voltar",
             "past",
             "send",
             "fechar",
@@ -567,7 +596,7 @@ class RacoonWindow(QMainWindow):
             self._fala_mask_atual()
             return
         if not self._eng_pronto():
-            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            self._aviso_e_voltar(D.MSG_REDACTOR_SEM_ENG)
             return
         self._falar(D.MSG_WELCOME_REDACTOR)
 
@@ -599,7 +628,7 @@ class RacoonWindow(QMainWindow):
             self._tratar_burn_texto(texto)
             return
         if self.modo == ModoUI.REDACTOR and not self._eng_pronto():
-            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            self._aviso_e_voltar(D.MSG_REDACTOR_SEM_ENG)
             return
         if self.fase == FaseUI.OLD_WORKSPACE:
             self._falar(
@@ -655,6 +684,17 @@ class RacoonWindow(QMainWindow):
         if self.fase == FaseUI.PENDENTE_RECONSTRUCT and self.pendente_recon:
             self._cancel_reconstruir()
 
+    def _on_back(self) -> None:
+        """Sai do aviso e devolve o passo do wizard / ACEPT do workspace."""
+        if self.fase == FaseUI.BURN:
+            self._falar(D.MSG_BURN, mostrar_decisao=True)
+            return
+        # Sem eng pronto, Mask é o único sítio onde o wizard / ACEPT funciona
+        if self.modo == ModoUI.REDACTOR and not self._eng_pronto():
+            self.modo = ModoUI.MASK
+            self._aplicar_chrome_modo()
+        self._fala_mask_atual()
+
     def _continuar_anterior(self) -> None:
         pasta = self._pasta_anterior
         if not pasta:
@@ -698,10 +738,13 @@ class RacoonWindow(QMainWindow):
         if self.modo == ModoUI.REDACTOR:
             self._on_past_report()
             return
+        if self.fase == FaseUI.BURN:
+            self._falar(D.MSG_BURN, mostrar_decisao=True)
+            return
         # PAST INPUT livre quantas vezes quiser após o eng pronto
         # (também com rodada pendente — a nova substitui a anterior).
         if self.fase not in (FaseUI.PRONTO, FaseUI.PENDENTE_SANITIZE):
-            self._falar("Finish setup first, then use PAST INPUT.")
+            self._aviso_e_voltar(D.MSG_SETUP_THEN_PAST_INPUT)
             return
         if not self.life.sessao:
             self._falar(D.MSG_NEED_ENGAGEMENT)
@@ -861,17 +904,17 @@ class RacoonWindow(QMainWindow):
     def _on_past_report(self) -> None:
         """Clipboard de relatório → preview invertido; ACEPT copia o real."""
         if not self._eng_pronto():
-            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            self._aviso_e_voltar(D.MSG_REDACTOR_SEM_ENG)
             return
         if self.fase not in (
             FaseUI.PRONTO,
             FaseUI.PENDENTE_SANITIZE,
             FaseUI.PENDENTE_RECONSTRUCT,
         ):
-            self._falar(D.MSG_SETUP_THEN_PAST_REPORT)
+            self._aviso_e_voltar(D.MSG_SETUP_THEN_PAST_REPORT)
             return
         if not self.life.sessao:
-            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            self._aviso_e_voltar(D.MSG_REDACTOR_SEM_ENG)
             return
         try:
             bruto = pyperclip.paste() or ""
@@ -943,6 +986,10 @@ class RacoonWindow(QMainWindow):
         if not texto:
             self._falar(D.MSG_WELCOME_NAME)
             return
+        pedido = interpretar(texto)
+        if pedido.intencao in (Intencao.RECUSAR_SCAN, Intencao.MUITO_LONGO):
+            self._aviso_e_voltar(pedido.mensagem_erro)
+            return
         self.life.abrir_novo(texto)
         self.fase = FaseUI.WIZARD_ITENS
         self._falar(D.MSG_CONFIDENTIAL_FORMAT)
@@ -959,7 +1006,7 @@ class RacoonWindow(QMainWindow):
 
         pedido = interpretar(texto)
         if pedido.intencao in (Intencao.RECUSAR_SCAN, Intencao.MUITO_LONGO):
-            self._falar(pedido.mensagem_erro)
+            self._aviso_e_voltar(pedido.mensagem_erro)
             return
         if pedido.intencao == Intencao.ITEM_CONFIDENCIAL and pedido.itens:
             msg = aplicar_itens_blocklist(
@@ -970,7 +1017,7 @@ class RacoonWindow(QMainWindow):
             self.fase = FaseUI.PRONTO
             self._falar(msg + "\n\n" + D.MSG_READY)
             return
-        self._falar(D.MSG_FORMAT_HINT)
+        self._aviso_e_voltar(D.MSG_FORMAT_HINT)
 
     def _tratar_questions(self, texto: str) -> None:
         if not texto:
@@ -1043,14 +1090,14 @@ class RacoonWindow(QMainWindow):
             return
         self._falar(
             "Commands: ip=/host=/…, allowed=/blocked=, "
-            "lookup PLACEHOLDER, reveal <cmd>, replace file.md — "
-            "or PAST INPUT."
+            "lookup PLACEHOLDER, cmd <command with TARGET_*>, "
+            "replace file.md — or PAST INPUT."
         )
 
     def _tratar_questions_redactor(self, texto: str) -> None:
         """Redactor: reconstruct via PAST REPORT. Questions só lookup curto / recusas."""
         if not self._eng_pronto():
-            self._falar(D.MSG_REDACTOR_SEM_ENG)
+            self._aviso_e_voltar(D.MSG_REDACTOR_SEM_ENG)
             return
         if texto_longo_para_questions(texto):
             self._falar(D.MSG_QUESTIONS_USE_PAST_REPORT)

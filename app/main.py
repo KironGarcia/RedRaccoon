@@ -21,6 +21,7 @@ os.environ.setdefault("TLDEXTRACT_CACHE", str(_cache_tld))
 from PySide6.QtWidgets import QApplication
 
 from ui.fonts import carregar_fontes_app
+from ui.raccoon import icone_janela
 from ui.window import construir_app
 
 
@@ -29,7 +30,10 @@ def main() -> int:
     app.setApplicationName("Racoon-Mask")
     app.setQuitOnLastWindowClosed(True)
     carregar_fontes_app()
+    icone = icone_janela()
+    app.setWindowIcon(icone)
     janela = construir_app()
+    janela.setWindowIcon(icone)
     janela.show()
     return app.exec()
 

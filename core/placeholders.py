@@ -21,6 +21,9 @@ PREFIXOS = {
     "USER": "TARGET_USER",
     "PASSWORD": "TARGET_PASS",
     "SID": "TARGET_SID",
+    "ID": "TARGET_ID",
+    "PHONE": "TARGET_PHONE",
+    "ADDRESS": "TARGET_ADDR",
 }
 
 
@@ -58,7 +61,12 @@ def obter_ou_criar(
     Retorna (placeholder, foi_criado_agora, mapping_id_se_existia).
     Não incrementa occurrence aqui — o sanitize decide após ACEPT.
     """
-    existente = repo.buscar_por_valor_real(engagement_id, real_value)
+    tipo = entity_type.upper()
+    # Domínio/e-mail: o DNS não distingue maiúscula (NYXLYNX.IO = nyxlynx.io)
+    tipo_ci = tipo in {"DOMAIN", "HOST", "EMAIL", "ORG"}
+    existente = repo.buscar_por_valor_real(
+        engagement_id, real_value, ignore_case=tipo_ci
+    )
     if existente:
         return existente["placeholder"], False, existente["id"]
 

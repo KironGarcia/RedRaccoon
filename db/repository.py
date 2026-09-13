@@ -199,15 +199,28 @@ class Repository:
     # --- entity_mapping ---
 
     def buscar_por_valor_real(
-        self, engagement_id: int, real_value: str
+        self,
+        engagement_id: int,
+        real_value: str,
+        *,
+        ignore_case: bool = False,
     ) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            """
-            SELECT * FROM entity_mapping
-            WHERE engagement_id = ? AND real_value = ?
-            """,
-            (engagement_id, real_value),
-        ).fetchone()
+        if ignore_case:
+            row = self._conn.execute(
+                """
+                SELECT * FROM entity_mapping
+                WHERE engagement_id = ? AND lower(real_value) = lower(?)
+                """,
+                (engagement_id, real_value),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                """
+                SELECT * FROM entity_mapping
+                WHERE engagement_id = ? AND real_value = ?
+                """,
+                (engagement_id, real_value),
+            ).fetchone()
         return dict(row) if row else None
 
     def buscar_por_placeholder(

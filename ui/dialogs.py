@@ -52,7 +52,10 @@ MSG_REDACTOR_NO_LLM = (
 
 MSG_QUESTIONS_USE_PAST_REPORT = (
     "Looks like a long text in this box.\n"
-    "Use the PAST REPORT button for that."
+    "Use the PAST REPORT button for that.\n"
+    "\n"
+    "Reconstructing a command or checking one placeholder?\n"
+    "Switch to Mask — Questions there is for small reconstructs."
 )
 
 MSG_CLIPBOARD_EMPTY_REPORT = (
@@ -66,6 +69,8 @@ MSG_COPIED_REPORT = (
 
 MSG_SETUP_THEN_PAST_REPORT = "Finish setup first, then use PAST REPORT."
 
+MSG_SETUP_THEN_PAST_INPUT = "Finish setup first, then use PAST INPUT."
+
 MSG_NO_SENSITIVE = (
     "No sensitive data found. Safe to share.\n"
     "Missed something?  blocked=word\n"
@@ -74,8 +79,12 @@ MSG_NO_SENSITIVE = (
 MSG_COPIED = (
     "Copied to clipboard.\n\n"
     "Need the real values back?\n"
-    "  paste cmd with TARGET_*/PERSON_* → fills real data\n"
+    "  If a model suggested a command, type:\n"
+    "    cmd <command with TARGET_* / PERSON_*>\n"
+    "  That rebuilds it with the real information.\n"
     "  lookup PLACEHOLDER → show one real value\n"
+    "\n"
+    "Or paste a new scan in PAST INPUT for a new mask."
 )
 
 MSG_CANCELLED = "Round discarded. Nothing copied."

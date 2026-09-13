@@ -106,6 +106,17 @@ QPushButton#cancel {{
 QPushButton#cancel:hover {{
     color: {COR_CANCEL_HOVER};
 }}
+QPushButton#voltar {{
+    background-color: transparent;
+    color: {COR_CANCEL};
+    border: none;
+    font-weight: 400;
+    font-size: {FONTE_ACEPT_CANCEL}px;
+    padding: 4px 10px;
+}}
+QPushButton#voltar:hover {{
+    color: {COR_ACEPT_HOVER};
+}}
 QPushButton#past {{
     background: qlineargradient(
         x1:0, y1:0, x2:0, y2:1,

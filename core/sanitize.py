@@ -32,6 +32,21 @@ RE_DOMAIN = re.compile(
     r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
     r"[a-zA-Z]{3,}\b"
 )
+# FQDN com TLD de 2 letras (.br, .uk) — só mascara se for do cliente
+RE_FQDN = re.compile(
+    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
+    r"[a-zA-Z]{2,}\b"
+)
+# CNPJ brasileiro (identifica a empresa no whois)
+RE_CNPJ = re.compile(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b")
+# Telefone E.164 (whois Registrant Phone: +55.8199…)
+RE_PHONE = re.compile(r"\+\d{1,3}[.\s-]?\d{6,14}\b")
+# Whois ICANN: rua / CEP — rótulo da tool, valor é PII
+RE_WHOIS_STREET = re.compile(r"(?im)^Registrant Street:\s*(.+?)\s*$")
+RE_WHOIS_POSTAL = re.compile(r"(?im)^Registrant Postal Code:\s*(\S+)\s*$")
+RE_WHOIS_CITY = re.compile(r"(?im)^Registrant City:\s*(.+?)\s*$")
+# gitleaks: linha "Secret:      <valor>" (pode ter / de base64)
+RE_GITLEAKS_SECRET = re.compile(r"(?im)^Secret:\s+(\S+)\s*$")
 # GetADUsers.py / secretsdump.exe — NÃO são domínio
 EXTENSOES_NAO_DOMINIO = (
     ".py",
@@ -77,10 +92,20 @@ RE_NTLMv2_HASH = re.compile(
     r"([0-9a-fA-F]{16,}):([0-9a-fA-F]{32,}):([0-9a-fA-F]{8,})"
 )
 # DOMAIN/user:pass@host (GetADUsers.py estilo Impacket) — user SEM ponto (não é FQDN)
+# (?<!/) evita hydra http-post-form /users/sign_in:body:fail → user/pass
 RE_IMP_SLASH_USER_PASS = re.compile(
-    r"(?i)\b([A-Za-z0-9_-]+)/([A-Za-z][A-Za-z0-9_-]{2,32}):"
+    r"(?i)(?<!/)\b([A-Za-z0-9_-]+)/([A-Za-z][A-Za-z0-9_-]{2,32}):"
     r"([^\s@:'\"]{4,128})"
 )
+# hydra: ^USER^ / ^PASS^ no módulo — não são credencial
+RE_HYDRA_MARCADOR = re.compile(r"\^(?:USER|PASS)\^", re.IGNORECASE)
+# mysql_sql: linhas "login   host" depois de mysql.user
+RE_MYSQL_USER_ROW = re.compile(
+    r"(?m)^[ \t]{2,}([A-Za-z][A-Za-z0-9._-]{1,32})[ \t]+"
+    r"(%|localhost|[\w.%-]+)\s*$"
+)
+# MySQL grant host com curinga (10.8.4.%)
+RE_IP_MYSQL_CURINGA = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){1,3}\.%)")
 # Prefixos SPN — não são domínio NetBIOS de login
 SPN_SERVICOS = {
     "mssqlsvc",
@@ -108,10 +133,23 @@ RE_APIKEY = re.compile(
     r"(?:api[_-]?key|apikey|access[_-]?token|secret[_-]?key)\s*[=:]\s*[\"']?"
     r"([A-Za-z0-9\-_.]{16,})"
     r"|(sk-[A-Za-z0-9]{20,})"
+    r"|(sk_live_[A-Za-z0-9]{10,})"
     r"|(AKIA[0-9A-Z]{16})"
+    r"|(glpat-[A-Za-z0-9_-]{10,})"
     r"|Bearer\s+([A-Za-z0-9\-._~+/]{20,}=*)"
+    r"|(?:hooks\.slack\.com/services/)([A-Za-z0-9]+/[A-Za-z0-9]+/[A-Za-z0-9]+)"
     r")"
 )
+
+# Máscara / localhost de rota — não é IP de cliente
+IPV4_NAO_MASCARAR = {
+    "0.0.0.0",
+    "255.0.0.0",
+    "255.255.0.0",
+    "255.255.255.0",
+    "255.255.255.255",
+    "127.0.0.1",
+}
 
 # Token curto demais → replace destrutivo (ex.: "IP" em PIPELINING, "sec" em seconds)
 MIN_CHARS_MAPEAVEL = 4
@@ -150,7 +188,34 @@ USERS_BUILTIN = {
     "anonymous",
 }
 
-# Username em contexto de conta (enum4linux / AD / harvest)
+# dotenv / .env: DB_PASSWORD=… (o \b de "password" falha em DB_PASSWORD)
+RE_ENV_SECRET = re.compile(
+    r"(?im)^([A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|PSK|KEY|TOKEN))\s*=\s*(.+)$"
+)
+RE_ENV_USERNAME = re.compile(
+    r"(?im)^[A-Z][A-Z0-9_]*(?:USERNAME|_USER)\s*=\s*"
+    r"([A-Za-z][A-Za-z0-9._-]{2,64})\s*$"
+)
+# smtp-user-enum: "IP: login exists"
+RE_SMTP_USER_EXISTS = re.compile(
+    r"(?m)^[^\s:][\w.:]*:\s*([A-Za-z][A-Za-z0-9._-]{2,64})\s+exists\b"
+)
+RE_VRFY_USER = re.compile(
+    r"(?i)\bVRFY\s+([A-Za-z][A-Za-z0-9._-]{2,64})\b"
+)
+SMTP_USER_NAO_CONTA = {
+    "admin",
+    "test",
+    "teste",
+    "guest",
+    "root",
+    "user",
+    "enabled",
+    "disabled",
+    "exists",
+    "users",
+    "enum",
+}
 RE_ACCOUNT_USER = re.compile(
     r"(?i)\bAccount:\s*([A-Za-z][A-Za-z0-9._-]{2,32})\b"
 )
@@ -178,7 +243,7 @@ RE_SLASH_FLAG_PASS = re.compile(
 )
 # Label: Password: secret / pwd=secret
 RE_PASS_LABEL = re.compile(
-    r"(?i)\b(?:password|passwd|pwd|secret)\s*[:=]\s*['\"]?([^\s'\"]+)"
+    r"(?i)(?:^|[\s_])(?:password|passwd|pwd|secret|psk)\s*[:=]\s*['\"]?([^\s'\"]+)"
 )
 # Comentário SMB: jsilva / TempPass!99  (exige espaços — não pega SPN MSSQLSvc/host)
 RE_USER_SLASH_PASS = re.compile(
@@ -193,12 +258,34 @@ RE_DASH_PASSWORD = re.compile(
 RE_PCT_PASSWORD = re.compile(
     r"%([^\s'\"%{}]{4,128})"
 )
-# rpcclient / samr / JSON BloodHound
+# rpcclient / samr / JSON BloodHound / whois Registro.br
 RE_FULL_NAME_FIELD = re.compile(
-    r"(?im)^(?:Full\s+Name|Display\s+Name)\s*:\s*(.+?)\s*$"
+    r"(?im)^(?:Full\s+Name|Display\s+Name|person|responsible|"
+    r"Registrant\s+Name|Admin(?:istrative)?\s+Name|"
+    r"Tech(?:nical)?\s+Name|Author)\s*:\s*(.+?)\s*$"
+)
+# WhatWeb: Meta-Author[Helena Voss - cargo]
+RE_META_AUTHOR_NOME = re.compile(
+    r"(?i)Meta-Author\[\s*"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+"
+    r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+){1,3})"
+)
+# openssl subject: ST = Pernambuco (estado no cert, não PERSON)
+RE_CERT_ST = re.compile(
+    r"\bST\s*=\s*([A-Za-z][A-Za-z ]{1,40}?)(?=,|\s*$)"
+)
+RE_NOME_LISTA_CARGO = re.compile(
+    r"(?m)^[ \t]*"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+"
+    r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+){1,3})"
+    r"[ \t]+-[ \t]+"
 )
 RE_JSON_DISPLAYNAME = re.compile(
-    r'(?i)"(?:displayname|display_name|cn)"\s*:\s*"([^"]{3,80})"'
+    r'(?i)"(?:displayname|display_name|cn|name)"\s*:\s*"([^"]{3,80})"'
+)
+# GitLab / API REST: "username":"hvoss"
+RE_JSON_USERNAME = re.compile(
+    r'(?i)"username"\s*:\s*"([A-Za-z][A-Za-z0-9._-]{1,64})"'
 )
 # Nome antes de <email>
 RE_NOME_ANTES_EMAIL = re.compile(
@@ -295,6 +382,8 @@ USERS_NAO_LOGIN = {
     "workstation",
     "segment",
     "edge",
+    "sign_in",
+    "sign_up",
     # ldapsearch / LDIF — Presidio confunde com PERSON/ORG
     "success",
     "binding",
@@ -523,14 +612,16 @@ ALLOW_TECNICO = re.compile(
     r"|Domain\s+Controller"
     r"|rootdse|ldap-rootdse|nbstat|kpasswd5"
     r"|Host\s+is\s+up|Not\s+shown|Nmap\s+done"
-    r"|PIPELINING|SIZE"
+    r"|PIPELINING|SIZE|VRFY|ETRN|STARTTLS|ENHANCEDSTATUSCODES|QUIT"
     # enum4linux / AD enum — rótulos e contas built-in (não são cliente)
     r"|Desc|Description|Groups|Group"
     r"|Default|Logon|NETLOGON|SYSVOL|ADMIN\$|IPC\$|C\$"
     r"|krbtgt|Administrator|Guest|Domain\s+Admins|Domain\s+Users"
     r"|Remote\s+Desktop\s+Users|Administrators|Users|Guests"
     r"|Workgroup|Domain\s+Name|Domain\s+Sid|RID|RID\s+Range"
-    r"|enum4linux|theHarvester|rpcclient|LinkedIn|Google"
+    r"|enum4linux|theHarvester|WhatWeb|Gobuster|rpcclient|LinkedIn|Google|Bing|DuckDuckGo"
+    r"|crt\.sh|Registro\.br|Nic\.br|cert\.br|whois\.registro\.br"
+    r"|Edge-?Security|Christian\s+Martorella"
     r"|Sun|Mon|Tue|Wed|Thu|Fri|Sat"
     r"|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
     r"|Security\s+Analyst|Sysadmin|Helpdesk|Business\s+Partner|External"
@@ -580,11 +671,23 @@ ALLOW_TECNICO = re.compile(
     r"|privileged|Listening|Servers\s+started|smb2support"
     # kerbrute / Rubeus
     r"|kerbrute|Rubeus|Kerberoasting|Kerberoast|asktgt|userenum|passwordspray"
+    r"|hydra|Hydra|Helm|http-post-form|https-post-form|mysql_sql"
     r"|SamAccountName|DistinguishedName|ServicePrincipalName|base64|kirbi"
     r"|VALID\s+USERNAME|VALID\s+LOGIN|Done\s+spraying|Ask\s+TGT|Dump\s+Ticket"
     r"|Target\s+LUID|Target\s+Domain|Domain\s+Controller|Using\s+credentials"
     r"|kerberoastable|outfile|creduser|credpassword|nowrap|Service\s+Accounts"
     r"|SQL\s+Service|Web\s+App|KDC|ropnop"
+    # nmap ssl/smtp + WhatWeb (rótulos, não cliente)
+    r"|Colaborador|Issuer|Public\s+Key|Meta-Author"
+    r"|UncommonHeaders|HTTPServer|PasswordField|HTML5"
+    r"|Strict-Transport-Security|X-Powered-By|X-Internal-Host"
+    r"|OpenVPN|GlobalProtect|Palo\s+Alto|Let's\s+Encrypt"
+    r"|DOCTYPE|nc\s+-nv|smtp-user-enum"
+    r"|gitleaks|IONOS|IANA|Expiry(?:\s+Date)?"
+    r"|Jump(?:\s+host)?"
+    r"|[KMGT]i?B(?:/s)?"
+    r"|Control\s+Plane|Edge\s+Control"
+    r"|[A-Z]{2,12}SESSID"
     r")\b",
     re.IGNORECASE,
 )
@@ -627,6 +730,17 @@ DOMINIOS_PUBLICOS = {
     "labs.portcullis.co.uk",
     "linkedin.com",
     "google.com",
+    "registro.br",
+    "nic.br",
+    "cert.br",
+    "edge-security.com",
+    "bing.com",
+    "duckduckgo.com",
+    "ionos.com",
+    "cloudflare.com",
+    "icann.org",
+    "mailgun.org",
+    "amazonaws.com",
 }
 
 # Tempo / ruído de terminal (ex.: 0.000012s, box-drawing)
@@ -730,9 +844,11 @@ class Sanitizer:
                 tipo = "HOST"
             itens.append((d, tipo))
         for n in eng.get("known_contacts") or []:
-            # email → EMAIL; login sem espaço → USER; nome completo → PERSON
+            # email → EMAIL; empresa/marca → ORG; login sem espaço → USER; nome → PERSON
             if "@" in n:
                 itens.append((n, "EMAIL"))
+            elif self._parece_marca_ou_empresa(n):
+                itens.append((n, "ORG"))
             elif self._parece_login_simples(n):
                 itens.append((n, "USER"))
             else:
@@ -752,6 +868,77 @@ class Sanitizer:
             if not self._token_mapeavel(valor, tipo):
                 continue
             for m in re.finditer(re.escape(valor), texto, flags=re.IGNORECASE):
+                if tipo in {"ORG", "PERSON"} and self._eh_prefixo_de_fqdn(
+                    texto, m.end()
+                ):
+                    continue
+                achados.append(
+                    Achado(
+                        real_value=texto[m.start() : m.end()],
+                        entity_type=tipo,
+                        start=m.start(),
+                        end=m.end(),
+                        camada="blocklist",
+                    )
+                )
+        return achados
+
+    def _achados_mapa_existente(
+        self,
+        texto: str,
+        repo: Any,
+        engagement_id: int,
+        eng: dict[str, Any],
+    ) -> list[Achado]:
+        """
+        Replay do mapa deste eng: mesmo valor → mesmo placeholder.
+        Não é blocklist do wizard; é consistência entre PAST INPUTs.
+        """
+        try:
+            rows = repo.listar_mapeamentos(engagement_id)
+        except Exception:
+            return []
+        itens: list[tuple[str, str]] = []
+        for row in rows:
+            valor = (row.get("real_value") or "").strip()
+            tipo = (row.get("entity_type") or "ID").upper()
+            if not valor:
+                continue
+            # Mapa sujo: *.host / .host não reentrar (cola *TARGET_)
+            if valor.startswith(("*.", "*")) or (
+                valor.startswith(".") and "." in valor[1:]
+            ):
+                continue
+            itens.append((valor, tipo))
+            if valor.lower().startswith("base64:"):
+                resto = valor.split(":", 1)[1].strip()
+                if resto:
+                    itens.append((resto, tipo))
+        achados: list[Achado] = []
+        ordenados = sorted(itens, key=lambda x: len(x[0]), reverse=True)
+        for valor, tipo in ordenados:
+            if valor.upper().startswith(
+                ("TARGET_", "PERSON_", "CLIENT_", "EMAIL_")
+            ):
+                continue
+            if self._eh_jargao_share_ou_rotulo(valor):
+                continue
+            if not self._token_mapeavel(valor, tipo):
+                continue
+            if tipo == "IP" and valor in IPV4_NAO_MASCARAR:
+                continue
+            if ALLOW_TECNICO.search(valor) or self._na_allow_lista(valor, eng):
+                continue
+            flags = (
+                re.IGNORECASE
+                if tipo in {"DOMAIN", "HOST", "EMAIL", "ORG", "PERSON", "USER"}
+                else 0
+            )
+            for m in re.finditer(re.escape(valor), texto, flags=flags):
+                if tipo in {"ORG", "PERSON"} and self._eh_prefixo_de_fqdn(
+                    texto, m.end()
+                ):
+                    continue
                 achados.append(
                     Achado(
                         real_value=texto[m.start() : m.end()],
@@ -768,6 +955,83 @@ class Sanitizer:
         """Login AD típico (cmendes) — sem espaço; não é nome completo."""
         v = (valor or "").strip()
         return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]{2,32}", v))
+
+    @staticmethod
+    def _parece_marca_ou_empresa(valor: str) -> bool:
+        """Razão social / marca (MareClara, S.A., Ltda) — não é login nem pessoa."""
+        v = (valor or "").strip()
+        if not v:
+            return False
+        if re.search(
+            r"(?i)\b(?:S\.?\s*A\.?|Ltda\.?|Ltd\.?|Inc\.?|LLC|GmbH|Corp\.?)\b",
+            v,
+        ):
+            return True
+        # PascalCase de marca (MareClara) — não é sAMAccountName
+        if " " not in v and re.search(r"[a-z][A-Z]", v):
+            return True
+        return False
+
+    @staticmethod
+    def _eh_rotulo_http_ou_scan(valor: str) -> bool:
+        """Rótulo de nmap/WhatWeb/HTTP — não é nome de cliente."""
+        v = (valor or "").strip()
+        if not v:
+            return False
+        if re.fullmatch(
+            r"(?i)WhatWeb|Meta-Author|UncommonHeaders|HTTPServer|"
+            r"PasswordField|Issuer|Public\s+Key|Colaborador|"
+            r"VRFY|ETRN|STARTTLS|"
+            r"Strict-Transport-Security|X-Powered-By|X-Internal-Host|"
+            r"X-[A-Za-z0-9-]+|"
+            r"Expiry(?:\s+Date)?|Jump(?:\s+host)?|"
+            r"[KMGT]i?B(?:/s)?|"
+            r"Organization|Registry|Registrar|IANA|IONOS|"
+            r"gitleaks|Finding|RuleID|Author|"
+            r"Edge\s+Control(?:\s+Plane)?|Control\s+Plane|"
+            r"[A-Z]{2,12}SESSID",
+            v,
+        ):
+            return True
+        # WhatWeb: Header[X-Internal-Host …
+        if re.match(r"(?i)header\s*\[", v):
+            return True
+        if re.match(r"(?i)gobuster\b", v):
+            return True
+        if re.fullmatch(r"(?i)DOCTYPE", v):
+            return True
+        return False
+
+    @staticmethod
+    def _normalizar_span_dominio(valor: str) -> str:
+        """Tira *. e ponto à esquerda — senão *.nyxlynx.io vira *TARGET_DOMAIN."""
+        v = (valor or "").strip()
+        v = re.sub(r"^\*\.", "", v)
+        return v.lstrip(".")
+
+    @staticmethod
+    def _eh_prefixo_de_fqdn(texto: str, fim: int) -> bool:
+        """True se o match é só o label (NyxLynx) e o texto segue como host (.internal)."""
+        return 0 <= fim < len(texto) and texto[fim] == "."
+
+    def _dominio_do_cliente(
+        self, valor: str, eng: dict[str, Any] | None
+    ) -> bool:
+        """Host/domínio do scope (ou TLD interno). Infra pública (registro.br) fica de fora."""
+        v = (valor or "").lower().strip().strip(".")
+        if not v:
+            return False
+        if v.endswith((".local", ".lan", ".internal", ".corp", ".intranet")):
+            return True
+        conhecidos: list[str] = []
+        for d in (eng or {}).get("domains") or []:
+            dd = (d or "").lower().strip().strip(".")
+            if dd and not self._eh_ip(dd):
+                conhecidos.append(dd)
+        for d in conhecidos:
+            if v == d or v.endswith("." + d):
+                return True
+        return False
 
     @staticmethod
     def _eh_jargao_share_ou_rotulo(valor: str) -> bool:
@@ -819,6 +1083,9 @@ class Sanitizer:
         # Hash / challenge NTLM / bootKey hex — sensível
         if re.fullmatch(r"(?i)(?:0x)?[0-9a-f]{16,}", v):
             return False
+        # CEP BR (00000-000) — PII de whois, não é ruído
+        if re.fullmatch(r"\d{5}-\d{3}", v):
+            return False
         if RE_LIXO.match(v):
             return True
         # Box-drawing / arte de terminal
@@ -853,6 +1120,8 @@ class Sanitizer:
             return 3 <= len(valor) <= 32
         if tipo == "PASSWORD":
             return 4 <= len(valor) <= 128
+        if tipo == "ID":
+            return len(valor) >= 11
         return len(valor) >= MIN_CHARS_MAPEAVEL
 
     def _eh_username_cliente(self, user: str, eng: dict[str, Any]) -> bool:
@@ -861,6 +1130,8 @@ class Sanitizer:
         if not u or not self._token_mapeavel(u, "USER"):
             return False
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]*", u):
+            return False
+        if RE_HYDRA_MARCADOR.fullmatch(u):
             return False
         baixo = u.casefold()
         if baixo in USERS_BUILTIN or self._eh_jargao_share_ou_rotulo(u):
@@ -881,6 +1152,8 @@ class Sanitizer:
         v = (valor or "").strip()
         if not v or " " in v:
             return False
+        if RE_HYDRA_MARCADOR.fullmatch(v):
+            return False
         if v.casefold() in PASS_NAO_MASCARAR:
             return False
         if re.search(r"[!@$%#*&]", v):
@@ -898,12 +1171,17 @@ class Sanitizer:
             return False
         if s.casefold() in PASS_NAO_MASCARAR:
             return False
+        if RE_HYDRA_MARCADOR.fullmatch(s):
+            return False
         if s.upper().startswith("STATUS_"):
             return False
         if self._eh_ip(s):
             return False
-        # Path / URL / flag — não é senha
-        if s.startswith("-") or "/" in s or "\\" in s or "://" in s:
+        # Path / URL / flag — não é senha.
+        # AWS secret é base64 com / no meio: NÃO recusar só por ter barra.
+        if s.startswith(("-", "/", "./", "../")) or "\\" in s or "://" in s:
+            return False
+        if re.match(r"^(/[A-Za-z0-9._-]+){2,}$", s):
             return False
         # secretsdump: rid:lmhash:nthash::: — não é senha única
         if re.match(r"(?i)^\d+:[0-9a-f]{32}:[0-9a-f]{32}", s):
@@ -948,6 +1226,7 @@ class Sanitizer:
             RE_NXC_DASH_USER,
             RE_NXC_LDAP_USER,
             RE_SAMACCOUNT_FIELD,
+            RE_JSON_USERNAME,
         ):
             for m in rx.finditer(texto):
                 _add(m.group(1))
@@ -957,6 +1236,9 @@ class Sanitizer:
 
         for m in RE_IMP_SLASH_USER_PASS.finditer(texto):
             if m.group(1).casefold() in SPN_SERVICOS:
+                continue
+            # hydra/form HTTP — não é DOMAIN/user:pass do Impacket
+            if re.search(r"[=&\[]", m.group(3) or ""):
                 continue
             _add(m.group(2))
 
@@ -982,6 +1264,30 @@ class Sanitizer:
             if dom and self._parece_login_simples(dom):
                 # NetBIOS domain em user::DOMAIN:… — não é login pessoa
                 pass
+
+        for m in RE_SMTP_USER_EXISTS.finditer(texto):
+            u = m.group(1)
+            if u.casefold() in SMTP_USER_NAO_CONTA:
+                continue
+            chave = u.casefold()
+            if chave not in vistos:
+                vistos.add(chave)
+                candidatos.append(u)
+        for m in RE_VRFY_USER.finditer(texto):
+            u = m.group(1)
+            if u.casefold() in SMTP_USER_NAO_CONTA:
+                continue
+            chave = u.casefold()
+            if chave not in vistos:
+                vistos.add(chave)
+                candidatos.append(u)
+        for m in RE_ENV_USERNAME.finditer(texto):
+            _add(m.group(1))
+
+        # Dump mysql.user / módulo mysql_sql (login na 1ª coluna)
+        if re.search(r"(?i)\bmysql\.user\b|\bmysql_sql\b", texto):
+            for m in RE_MYSQL_USER_ROW.finditer(texto):
+                _add(m.group(1))
 
         achados: list[Achado] = []
         for user in candidatos:
@@ -1027,6 +1333,8 @@ class Sanitizer:
         for m in RE_IMP_SLASH_USER_PASS.finditer(texto):
             if m.group(1).casefold() in SPN_SERVICOS:
                 continue
+            if re.search(r"[=&\[]", m.group(3) or ""):
+                continue
             _add_senha(m.group(3))
 
         for m in RE_CLI_PASSWORD.finditer(texto):
@@ -1041,6 +1349,12 @@ class Sanitizer:
             s = m.group(1)
             if self._parece_senha(s) or self._eh_password_cliente(s):
                 _add_senha(s)
+
+        for m in RE_ENV_SECRET.finditer(texto):
+            nome, valor = m.group(1), m.group(2).strip().strip("'\"")
+            if not valor:
+                continue
+            _add_senha(valor)
 
         for m in RE_USER_SLASH_PASS.finditer(texto):
             s = m.group(2)
@@ -1173,6 +1487,12 @@ class Sanitizer:
             nome = (nome or "").strip()
             if not nome or nome.startswith(("TARGET_", "PERSON_", "CLIENT_")):
                 return
+            if nome.upper() in {
+                "REDACTED FOR PRIVACY",
+                "REDACTED",
+                "N/A",
+            }:
+                return
             chave = nome.casefold()
             if chave in vistos:
                 return
@@ -1201,11 +1521,15 @@ class Sanitizer:
 
         for m in RE_FULL_NAME_FIELD.finditer(texto):
             _considerar(m.group(1))
+        for m in RE_NOME_LISTA_CARGO.finditer(texto):
+            _considerar(m.group(1))
         for m in RE_JSON_DISPLAYNAME.finditer(texto):
             _considerar(m.group(1))
         for m in RE_NOME_ANTES_EMAIL.finditer(texto):
             _considerar(m.group(1))
         for m in RE_NOME_ADMIN_LOCAL.finditer(texto):
+            _considerar(m.group(1))
+        for m in RE_META_AUTHOR_NOME.finditer(texto):
             _considerar(m.group(1))
         return achados
 
@@ -1230,9 +1554,60 @@ class Sanitizer:
         eng = eng or {}
         achados: list[Achado] = []
         for m in RE_IPV4.finditer(texto):
+            ip = m.group()
+            if ip in IPV4_NAO_MASCARAR:
+                continue
             achados.append(
-                Achado(m.group(), "IP", m.start(), m.end(), "regex")
+                Achado(ip, "IP", m.start(), m.end(), "regex")
             )
+        for m in RE_IP_MYSQL_CURINGA.finditer(texto):
+            achados.append(
+                Achado(m.group(1), "IP", m.start(1), m.end(1), "regex")
+            )
+        for m in RE_CNPJ.finditer(texto):
+            achados.append(
+                Achado(m.group(), "ID", m.start(), m.end(), "regex")
+            )
+        for m in RE_PHONE.finditer(texto):
+            achados.append(
+                Achado(m.group(), "PHONE", m.start(), m.end(), "regex")
+            )
+        for m in RE_CERT_ST.finditer(texto):
+            val = m.group(1).strip()
+            if val and val.lower() not in {"br", "us", "uk", "n/a"}:
+                achados.append(
+                    Achado(val, "ADDRESS", m.start(1), m.end(1), "regex")
+                )
+        for m in RE_WHOIS_STREET.finditer(texto):
+            val = m.group(1).strip()
+            if val and val.upper() not in {"REDACTED", "REDACTED FOR PRIVACY", "N/A"}:
+                achados.append(
+                    Achado(val, "ADDRESS", m.start(1), m.end(1), "regex")
+                )
+        for m in RE_WHOIS_POSTAL.finditer(texto):
+            val = m.group(1).strip()
+            if val and val.upper() not in {"REDACTED", "N/A"}:
+                achados.append(
+                    Achado(val, "ADDRESS", m.start(1), m.end(1), "regex")
+                )
+        for m in RE_WHOIS_CITY.finditer(texto):
+            val = m.group(1).strip()
+            if val and val.upper() not in {"REDACTED", "REDACTED FOR PRIVACY", "N/A"}:
+                achados.append(
+                    Achado(val, "ADDRESS", m.start(1), m.end(1), "regex")
+                )
+        for m in RE_GITLEAKS_SECRET.finditer(texto):
+            segredo = m.group(1).strip().strip("'\"")
+            if segredo and self._token_mapeavel(segredo, "APIKEY"):
+                achados.append(
+                    Achado(
+                        segredo,
+                        "APIKEY",
+                        m.start(1),
+                        m.start(1) + len(segredo),
+                        "regex",
+                    )
+                )
         for m in RE_EMAIL.finditer(texto):
             email = m.group()
             if self._eh_upn_ad(email):
@@ -1266,12 +1641,18 @@ class Sanitizer:
                         )
                     )
                 continue
+            local, _, dominio = email.partition("@")
+            # E-mail de vendor/tool (edge-security.com) não é cliente
+            if dominio and self._dominio_publico(dominio):
+                continue
             achados.append(
                 Achado(email, "EMAIL", m.start(), m.end(), "regex")
             )
         for m in RE_URL.finditer(texto):
             host = self._host_de_url(m.group())
             if not host or self._dominio_publico(host) or self._eh_lixo(host):
+                continue
+            if not self._dominio_do_cliente(host, eng):
                 continue
             achados.append(
                 Achado(host, "DOMAIN", m.start(), m.end(), "regex")
@@ -1286,24 +1667,32 @@ class Sanitizer:
                 Achado(segredo, "APIKEY", start, start + len(segredo), "regex")
             )
         # Domínios livres: NÃO varrer a internet inteira.
-        # Domínio de cliente entra pela blocklist (camada 1).
-        # Aqui só reforça se parecer hostname interno (sem TLD público famoso).
-        for m in RE_DOMAIN.finditer(texto):
-            val = m.group()
-            if self._dominio_publico(val) or self._eh_lixo(val):
+        # Só reforça: TLD interno OU FQDN do scope (inclui .br do cliente).
+        for m in RE_FQDN.finditer(texto):
+            val = self._normalizar_span_dominio(m.group())
+            if not val or self._dominio_publico(val) or self._eh_lixo(val):
                 continue
             if ALLOW_TECNICO.search(val):
                 continue
             baixo = val.lower()
             if any(baixo.endswith(ext) for ext in EXTENSOES_NAO_DOMINIO):
                 continue
-            # Evita TLDs genéricos de tool docs sem estar na blocklist:
-            # só mascara domínio “solto” se tiver cara de interno (.local, .lan, .internal)
-            if baixo.endswith(
+            interno = baixo.endswith(
                 (".local", ".lan", ".internal", ".corp", ".intranet")
-            ):
+            )
+            if interno or self._dominio_do_cliente(val, eng):
+                grupo = m.group()
+                idx = grupo.lower().find(val.lower())
+                if idx < 0:
+                    continue
                 achados.append(
-                    Achado(val, "DOMAIN", m.start(), m.end(), "regex")
+                    Achado(
+                        val,
+                        "DOMAIN",
+                        m.start() + idx,
+                        m.start() + idx + len(val),
+                        "regex",
+                    )
                 )
         achados.extend(self._achados_usernames(texto, eng))
         achados.extend(self._achados_senhas(texto))
@@ -1363,6 +1752,9 @@ class Sanitizer:
             trecho = texto[r.start : r.end].strip()
             if not trecho or self._eh_lixo(trecho):
                 continue
+            # NER não pode atravessar linha (whois Name + Organization)
+            if "\n" in trecho:
+                continue
             if not self._token_mapeavel(trecho, tipo):
                 continue
             if self._parece_senha(trecho):
@@ -1370,6 +1762,33 @@ class Sanitizer:
             if ALLOW_TECNICO.search(trecho):
                 continue
             if self._na_allow_lista(trecho, eng):
+                continue
+            # theHarvester: NER engole "Searching Bing" inteiro
+            if tipo == "PERSON" and re.match(r"(?i)searching\b", trecho):
+                continue
+            # Chave de .env / dump PHP — não é nome de pessoa
+            if tipo == "PERSON" and re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", trecho):
+                continue
+            if re.search(
+                r"(?i)(?:\$_)?(?:ENV|SERVER|GET|POST|COOKIE|REQUEST)\s*\[",
+                trecho,
+            ):
+                continue
+            if tipo in {"PERSON", "ORG"} and re.search(r"\[['\"]", trecho):
+                continue
+            if re.search(
+                r"(?i)\b(?:Registrant|Organization|Expiry|Registry|"
+                r"Registrar|Jump\s+host|Meta-Author)\b",
+                trecho,
+            ):
+                continue
+            if self._eh_rotulo_http_ou_scan(trecho):
+                continue
+            if tipo == "DOMAIN":
+                trecho = self._normalizar_span_dominio(trecho)
+                if not trecho:
+                    continue
+            if tipo == "DOMAIN" and not self._dominio_do_cliente(trecho, eng):
                 continue
             if self._eh_jargao_share_ou_rotulo(trecho):
                 continue
@@ -1424,8 +1843,8 @@ class Sanitizer:
                 r"Group|Session|ACL|RDP|SPN|Users|Computers|"
                 r"Responder|ntlmrelayx|Poisoners|LLMNR|NBT-NS|MDNS|"
                 r"NTLMv2(?:-SSP)?|Cleartext|WORKGROUP|SMBD-Relay|"
-                r"Rubeus|kerbrute|Kerberoasting|Ask\s+TGT|Web\s+App|"
-                r"SQL\s+Service",
+                r"Rubeus|kerbrute|Hydra|Helm|Kerberoasting|Ask\s+TGT|Web\s+App|"
+                r"SQL\s+Service|http-post-form|https-post-form|mysql_sql",
                 trecho,
             ):
                 continue
@@ -1520,6 +1939,9 @@ class Sanitizer:
         na hora (CANCEL deve reverter via descartar_rodada).
         """
         camada1 = self._achados_blocklist(texto, eng)
+        camada1.extend(
+            self._achados_mapa_existente(texto, repo, engagement_id, eng)
+        )
         camada2 = self._achados_regex(texto, eng)
         camada3 = self._achados_presidio(texto, eng)
         fundidos = [
@@ -1528,6 +1950,7 @@ class Sanitizer:
             if not self._eh_lixo(a.real_value)
             and (
                 a.camada == "blocklist"
+                or a.entity_type in {"USER", "PASSWORD", "EMAIL", "APIKEY"}
                 or not self._na_allow_lista(a.real_value, eng)
             )
         ]
@@ -1539,10 +1962,13 @@ class Sanitizer:
                 teve_sensivel=False,
             )
 
-        # Agrupa por valor real (case-sensitive no texto encontrado)
+        # Agrupa por valor real. Domínio/e-mail: maiúscula não muda o ident.
         contagem: dict[str, dict[str, Any]] = {}
         for a in fundidos:
-            chave = a.real_value
+            if a.entity_type in {"DOMAIN", "HOST", "EMAIL", "ORG"}:
+                chave = a.real_value.casefold()
+            else:
+                chave = a.real_value
             if chave not in contagem:
                 contagem[chave] = {
                     "real_value": a.real_value,
@@ -1558,7 +1984,8 @@ class Sanitizer:
         mapa_replace: dict[str, str] = {}
         resumo: list[dict[str, Any]] = []
 
-        for real, info in contagem.items():
+        for _chave, info in contagem.items():
+            real = info["real_value"]
             if not self._token_mapeavel(real, info["entity_type"]):
                 continue
             placeholder, criado, mid = ph.obter_ou_criar(
@@ -1622,11 +2049,21 @@ class Sanitizer:
         for real in sorted(mapa_replace.keys(), key=len, reverse=True):
             pholder = mapa_replace[real]
             if re.fullmatch(r"[A-Za-z0-9._$-]+", real):
-                texto_out = re.sub(
-                    rf"(?<![A-Za-z0-9_]){re.escape(real)}(?![A-Za-z0-9_])",
-                    pholder,
-                    texto_out,
-                )
+                if pholder.startswith("CLIENT_NAME"):
+                    # Marca colada (MareClaraPortal). Não come FQDN (nyxlynx.internal).
+                    texto_out = re.sub(
+                        rf"(?<![A-Za-z0-9_]){re.escape(real)}(?![a-z0-9_]|\.)",
+                        pholder,
+                        texto_out,
+                        flags=re.IGNORECASE,
+                    )
+                else:
+                    texto_out = re.sub(
+                        rf"(?<![A-Za-z0-9_]){re.escape(real)}(?![A-Za-z0-9_])",
+                        pholder,
+                        texto_out,
+                        flags=re.IGNORECASE,
+                    )
             else:
                 texto_out = texto_out.replace(real, pholder)
 

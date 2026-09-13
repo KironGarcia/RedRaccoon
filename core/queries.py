@@ -60,7 +60,7 @@ RE_LOOKUP = re.compile(
 RE_REPLACE = re.compile(
     r"(?i)^(?:replace|unmask)\s+(?:in\s+)?(.+\.(?:md|txt))\s*$"
 )
-RE_REVEAL = re.compile(r"(?is)^(?:reveal|decode|real)\s+(.+)$")
+RE_REVEAL = re.compile(r"(?is)^(?:reveal|decode|real|cmd)\s+(.+)$")
 # Calibração no preview: falso positivo / fuga
 RE_ALLOWED = re.compile(r"(?is)^allowed\s*=\s*(.+)$")
 RE_BLOCKED = re.compile(r"(?is)^blocked\s*=\s*(.+)$")

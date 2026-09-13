@@ -6,8 +6,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPaintEvent, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QRect, QSize, Qt, QTimer
+from PySide6.QtGui import (
+    QColor,
+    QIcon,
+    QImage,
+    QPaintEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    qAlpha,
+)
 from PySide6.QtWidgets import QPushButton, QWidget
 
 from ui import theme as T
@@ -16,6 +26,68 @@ from ui import theme as T
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _PATH_NORMAL = _ASSETS / "racon-normal.png"
 _PATH_PENSANDO = _ASSETS / "Racoon-pensando.png"
+# Tamanhos típicos de taskbar / alt-tab
+_ICON_LADOS = (16, 24, 32, 48, 64, 128, 256)
+# Pixel quase invisível (anti-alias) não conta como desenho
+_LIMIAR_ALPHA_ICONE = 8
+# ~0,1 mm na barra (~1,5 % do lado do ícone; mínimo 1 px)
+_MARGEM_ICONE_FRACAO = 0.015
+
+
+def _bbox_objeto(img: QImage) -> QRect | None:
+    """Onde o Racoon começa: primeiro pixel não-nulo em cada um dos quatro lados."""
+    w, h = img.width(), img.height()
+    minx, miny, maxx, maxy = w, h, -1, -1
+    for y in range(h):
+        for x in range(w):
+            if qAlpha(img.pixel(x, y)) > _LIMIAR_ALPHA_ICONE:
+                if x < minx:
+                    minx = x
+                if x > maxx:
+                    maxx = x
+                if y < miny:
+                    miny = y
+                if y > maxy:
+                    maxy = y
+    if maxx < minx:
+        return None
+    return QRect(minx, miny, maxx - minx + 1, maxy - miny + 1)
+
+
+def _pixmap_icone_preenchido(recorte: QPixmap, lado: int) -> QPixmap:
+    """Amplia o recorte do Racoon até ocupar o ícone, com filete nulo nas bordas."""
+    margem = max(1, round(lado * _MARGEM_ICONE_FRACAO))
+    interno = max(1, lado - 2 * margem)
+    scaled = recorte.scaled(
+        interno,
+        interno,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    saida = QPixmap(lado, lado)
+    saida.fill(Qt.GlobalColor.transparent)
+    p = QPainter(saida)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    p.drawPixmap((lado - scaled.width()) // 2, (lado - scaled.height()) // 2, scaled)
+    p.end()
+    return saida
+
+
+def icone_janela() -> QIcon:
+    """Ícone da janela/taskbar: Racoon preenchido, não o PNG com padding nulo."""
+    icone = QIcon()
+    origem = QImage(str(_PATH_NORMAL))
+    if origem.isNull():
+        return icone
+    caixa = _bbox_objeto(origem)
+    if caixa is None:
+        return icone
+    recorte = QPixmap.fromImage(origem.copy(caixa))
+    if recorte.isNull():
+        return icone
+    for lado in _ICON_LADOS:
+        icone.addPixmap(_pixmap_icone_preenchido(recorte, lado))
+    return icone
 
 # Sprite horizontal: largura ÷ 340 = N frames (hoje 680×350 → 2 frames)
 _LARGURA_FRAME = 340
