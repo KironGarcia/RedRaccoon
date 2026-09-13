@@ -275,6 +275,43 @@ F1 oficial da Fase 3 permanece **~52%**.
 
 ---
 
-## Fases 4+ — pendentes
+## Fase 4 — Vulnerability analysis
 
-Vuln, exploit, post-ex e relatório ainda não corridos neste eng.
+Ferramentas: **curl** (`.env`) · **nuclei** · **curl** (`debug.php`)
+
+### 4.4 Benchmark oficial — 1ª cola
+
+| Tool | Cobertura | Precisão | F1 |
+|------|-----------|----------|-----|
+| curl .env | ~75% | ~92% | **~70%** |
+| nuclei | ~100% | ~100% | **~100%** |
+| curl debug.php | ~65% | ~70% | **~60%** |
+| **Fase 4 (oficial)** | | | **~77%** |
+
+### 4.5 Fixes (não é benchmark)
+
+| Erro | Onde | Correção |
+|------|------|----------|
+| `DB_USERNAME` → ORG | `sanitize.py` | allow labels SCREAMING_SNAKE env |
+| `APP_NAME`/`DB_DATABASE` values | `sanitize.py` | `RE_ENV_BRAND_VALUE` → ORG/ID |
+| AKIA parcial | `sanitize.py` | `AKIA[0-9A-Z]{16,}` |
+| Debug Console / Config → PERSON | `sanitize.py` | ALLOW / rótulos |
+| `vo_app@IP` | `sanitize.py` | `RE_USER_AT_IP` |
+| Title Portal → PERSON | `sanitize.py` | ORG (Portal/Ltda/API) |
+| path slugs | workspace | `blocked=` |
+
+### 4.6 Reteste (nota — não oficial)
+
+| Tool | Reteste |
+|------|---------|
+| curl .env | fechou |
+| nuclei | fechou |
+| curl debug.php | fechou |
+
+F1 oficial da Fase 4 permanece **~77%**.
+
+---
+
+## Fases 5+ — pendentes
+
+Exploit, post-ex e relatório ainda não corridos neste eng.

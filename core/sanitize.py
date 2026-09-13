@@ -136,7 +136,7 @@ RE_APIKEY = re.compile(
     r"([A-Za-z0-9\-_.]{16,})"
     r"|(sk-[A-Za-z0-9]{20,})"
     r"|(sk_live_[A-Za-z0-9]{10,})"
-    r"|(AKIA[0-9A-Z]{16})"
+    r"|(AKIA[0-9A-Z]{16,})"
     r"|(glpat-[A-Za-z0-9_-]{10,})"
     r"|Bearer\s+([A-Za-z0-9\-._~+/]{20,}=*)"
     r"|(?:hooks\.slack\.com/services/)([A-Za-z0-9]+/[A-Za-z0-9]+/[A-Za-z0-9]+)"
@@ -200,6 +200,60 @@ RE_ENV_USERNAME = re.compile(
     r"(?im)^[A-Z][A-Z0-9_]*(?:USERNAME|_USER)\s*=\s*"
     r"([A-Za-z][A-Za-z0-9._-]{2,64})\s*$"
 )
+# dotenv: APP_NAME=BrandPortal / DB_DATABASE=brand_db — valor coined (não a KEY)
+RE_ENV_BRAND_VALUE = re.compile(
+    r"(?im)^([A-Z][A-Z0-9_]*(?:_NAME|_DATABASE|_DB|_ORGANIZATION|_COMPANY|_CLIENT|_TITLE))\s*=\s*"
+    r"([A-Za-z][A-Za-z0-9_]{3,80})\s*$"
+)
+# Valores genéricos de framework — não são marca/cliente
+ENV_BRAND_VALUE_COMUM = {
+    "production",
+    "staging",
+    "development",
+    "local",
+    "testing",
+    "test",
+    "true",
+    "false",
+    "null",
+    "none",
+    "mysql",
+    "pgsql",
+    "postgres",
+    "sqlite",
+    "redis",
+    "memcached",
+    "array",
+    "file",
+    "sync",
+    "async",
+    "debug",
+    "info",
+    "warning",
+    "error",
+    "utf8",
+    "utf8mb4",
+    "smtp",
+    "sendmail",
+    "log",
+    "stack",
+    "single",
+    "daily",
+    "app",
+    "application",
+    "laravel",
+    "django",
+    "rails",
+    "express",
+}
+# user@IP (app_user@10.x) — local-part não casa em RE_EMAIL (exige TLD)
+RE_USER_AT_IP = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9._-]{1,64})@"
+    r"((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?))\b"
+)
+# SCREAMING_SNAKE env KEY labels (DB_USERNAME, APP_NAME, …) — não ORG/PERSON
+RE_ENV_KEY_LABEL = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 # smtp-user-enum: "host: login EXISTS" / "DOES NOT EXIST"
 RE_SMTP_USER_EXISTS = re.compile(
     r"(?im)^[^\s:][\w.:]*:\s*([A-Za-z][A-Za-z0-9._-]{2,64})\s+"
@@ -229,8 +283,9 @@ RE_FOUND_USER_PAREN = re.compile(
     r"(?i)\bFound\s+user:\s*[^(\n]{0,80}\(\s*([A-Za-z][A-Za-z0-9._-]{2,32})\s*\)"
 )
 RE_USER_FIELD = re.compile(
-    r"(?i)\b(?:Username|Login|sAMAccountName|SamAccountName)\s*[:=]\s*"
-    r"['\"]?([A-Za-z][A-Za-z0-9._-]{2,32})\b"
+    # (?<!Last ) evita "Last login: Nome" (nome ≠ sAMAccountName)
+    r"(?i)(?:\b(?:Username|sAMAccountName|SamAccountName)|(?<!Last\s)\bLogin)"
+    r"\s*[:=]\s*['\"]?([A-Za-z][A-Za-z0-9._-]{2,32})\b"
 )
 # NetExec / CrackMapExec / BH logs: DOMAIN\user:password (aceita \\ escapado)
 RE_NXC_DOM_USER_PASS = re.compile(
@@ -332,9 +387,20 @@ RE_JSON_USERNAME = re.compile(
 )
 # Nome antes de <email>
 RE_NOME_ANTES_EMAIL = re.compile(
+    # Nome antes de <email> / &lt;email&gt; — não Title Case antes de </title>
     r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+"
     r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+)+)"
-    r"\s*<"
+    r"\s*(?:&lt;|<)\s*[A-Za-z0-9._%+\-]+@"
+)
+# HTML <title>… multi-word Title Case ending Portal/Ltda/API → ORG
+RE_HTML_TITLE_ORG = re.compile(
+    r"(?is)<title\b[^>]*>[^<]*?"
+    r"("
+    r"[A-ZÁÉÍÓÚÂÊÔÃÕÀ][A-Za-záéíóúâêôãõàç0-9]*"
+    r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÀ][A-Za-záéíóúâêôãõàç0-9]*)+"
+    r"\s+(?:Portal|Ltda\.?|Ltd\.?|API|Inc\.?|Corp\.?|S\.?\s*A\.?)"
+    r")"
+    r"[^<]*</title>"
 )
 # "Jose Silva Admin local HOST - pass"
 RE_NOME_ADMIN_LOCAL = re.compile(
@@ -739,6 +805,8 @@ ALLOW_TECNICO = re.compile(
     r"|DOCTYPE|nc\s+-nv|smtp-user-enum"
     # smtp-user-enum banner labels (Presidio → PERSON/USER)
     r"|Worker|Scan"
+    # PHP debug.php / Debug Console / Config path (Presidio → PERSON)
+    r"|PHP\s+Debug(?:\s+Console)?|Debug\s+Console|Config(?:\s+path)?"
     r"|gitleaks|IONOS|IANA|Expiry(?:\s+Date)?"
     r"|Jump(?:\s+host)?"
     r"|[KMGT]i?B(?:/s)?"
@@ -1032,10 +1100,53 @@ class Sanitizer:
             v,
         ):
             return True
+        # Multi-word Title Case ending Portal/API (HTML title / banner)
+        if " " in v and re.search(
+            r"(?i)\b(?:Portal|API|Ltda\.?|Ltd\.?|Inc\.?|Corp\.?|S\.?\s*A\.?)\s*$",
+            v,
+        ):
+            return True
         # PascalCase de marca (MareClara) — não é sAMAccountName
         if " " not in v and re.search(r"[a-z][A-Z]", v):
             return True
         return False
+
+    @staticmethod
+    def _eh_rotulo_env_key(valor: str) -> bool:
+        """SCREAMING_SNAKE .env KEY (DB_USERNAME, APP_NAME) — rótulo, não ORG."""
+        return bool(RE_ENV_KEY_LABEL.fullmatch((valor or "").strip()))
+
+    @staticmethod
+    def _parece_token_env_marca(valor: str) -> bool:
+        """Valor coined após APP_NAME=/DB_DATABASE= (alnum + _ opcional, len>=4)."""
+        v = (valor or "").strip()
+        if len(v) < 4:
+            return False
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{3,80}", v):
+            return False
+        if v.casefold() in ENV_BRAND_VALUE_COMUM:
+            return False
+        # coined: underscore, PascalCase colado, ou TitleCase simples
+        if "_" in v:
+            return True
+        if re.search(r"[a-z][A-Z]", v):
+            return True
+        if v[0].isupper() and v.isalpha():
+            return True
+        # lowercase monolito longo (sem underscore) — ainda coined
+        if v.islower() and len(v) >= 6:
+            return True
+        return False
+
+    @staticmethod
+    def _tipo_env_brand_value(valor: str) -> str:
+        """PascalCase/Title → ORG; snake_case coined → ID."""
+        v = (valor or "").strip()
+        if re.search(r"[a-z][A-Z]", v) or (
+            v[:1].isupper() and " " not in v and "_" not in v
+        ):
+            return "ORG"
+        return "ID"
 
     @staticmethod
     def _eh_rotulo_http_ou_scan(valor: str) -> bool:
@@ -1055,6 +1166,7 @@ class Sanitizer:
             r"[KMGT]i?B(?:/s)?|"
             r"Organization|Registry|Registrar|IANA|IONOS|"
             r"gitleaks|Finding|RuleID|Author|"
+            r"Debug\s+Console|PHP\s+Debug|Config(?:\s+path)?|"
             r"Edge\s+Control(?:\s+Plane)?|Control\s+Plane|"
             r"[A-Z]{2,12}SESSID",
             v,
@@ -1357,6 +1469,10 @@ class Sanitizer:
         for m in RE_ENV_USERNAME.finditer(texto):
             _add(m.group(1))
 
+        # user@IP (app_user@10.x) — mascara local-part; IP já cai em RE_IPV4
+        for m in RE_USER_AT_IP.finditer(texto):
+            _add(m.group(1))
+
         # Dump mysql.user / módulo mysql_sql (login na 1ª coluna)
         if re.search(r"(?i)\bmysql\.user\b|\bmysql_sql\b", texto):
             for m in RE_MYSQL_USER_ROW.finditer(texto):
@@ -1573,7 +1689,8 @@ class Sanitizer:
                 return
             if self._eh_jargao_share_ou_rotulo(nome):
                 return
-            if not self._token_mapeavel(nome, "PERSON"):
+            tipo_gate = "ORG" if self._parece_marca_ou_empresa(nome) else "PERSON"
+            if not self._token_mapeavel(nome, tipo_gate):
                 return
             # Precisa cara de nome (espaço) ou display curto não-jargão
             if " " not in nome and not re.fullmatch(
@@ -1581,11 +1698,12 @@ class Sanitizer:
             ):
                 return
             vistos.add(chave)
+            tipo = "ORG" if self._parece_marca_ou_empresa(nome) else "PERSON"
             for m2 in re.finditer(re.escape(nome), texto):
                 achados.append(
                     Achado(
                         real_value=texto[m2.start() : m2.end()],
-                        entity_type="PERSON",
+                        entity_type=tipo,
                         start=m2.start(),
                         end=m2.end(),
                         camada="regex",
@@ -1809,6 +1927,31 @@ class Sanitizer:
             achados.append(
                 Achado(realm, tipo, m.start(1), m.end(1), "regex")
             )
+        # dotenv APP_NAME=/DB_DATABASE=/… — valor coined → ORG/ID (KEY intacta)
+        for m in RE_ENV_BRAND_VALUE.finditer(texto):
+            valor = m.group(2).strip().strip("'\"")
+            if not self._parece_token_env_marca(valor):
+                continue
+            tipo = self._tipo_env_brand_value(valor)
+            if not self._token_mapeavel(valor, tipo):
+                continue
+            if self._na_allow_lista(valor, eng) or ALLOW_TECNICO.search(valor):
+                continue
+            achados.append(
+                Achado(valor, tipo, m.start(2), m.end(2), "regex")
+            )
+        # HTML <title> multi-word … Portal/Ltda/API → ORG (não PERSON)
+        for m in RE_HTML_TITLE_ORG.finditer(texto):
+            titulo = m.group(1).strip()
+            if not titulo or self._na_allow_lista(titulo, eng):
+                continue
+            if ALLOW_TECNICO.search(titulo) or self._eh_rotulo_http_ou_scan(titulo):
+                continue
+            if not self._token_mapeavel(titulo, "ORG"):
+                continue
+            achados.append(
+                Achado(titulo, "ORG", m.start(1), m.end(1), "regex")
+            )
         # WhatWeb MetaGenerator[Title Case Product] — título inteiro (sem fragmento)
         for m in RE_META_GENERATOR_TITLE.finditer(texto):
             titulo = m.group(1).strip()
@@ -1931,7 +2074,9 @@ class Sanitizer:
             # theHarvester: NER engole "Searching Bing" inteiro
             if tipo == "PERSON" and re.match(r"(?i)searching\b", trecho):
                 continue
-            # Chave de .env / dump PHP — não é nome de pessoa
+            # Chave de .env SCREAMING_SNAKE (DB_USERNAME, APP_NAME) — não ORG/PERSON
+            if tipo in {"PERSON", "ORG"} and self._eh_rotulo_env_key(trecho):
+                continue
             if tipo == "PERSON" and re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", trecho):
                 continue
             if re.search(
@@ -2038,6 +2183,9 @@ class Sanitizer:
                 or "\n" in trecho
             ):
                 continue
+            # Multi-word Title Case … Portal/Ltda/API — prefer ORG over PERSON
+            if tipo == "PERSON" and self._parece_marca_ou_empresa(trecho):
+                tipo = "ORG"
             # Recalcula span no texto limpo (primeira ocorrência do trecho no range)
             start = texto.find(trecho, r.start, r.end + 1)
             if start < 0:
