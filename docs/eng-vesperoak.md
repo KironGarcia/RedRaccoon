@@ -382,5 +382,39 @@ F1 oficial da Fase 6 permanece **~72%**.
 
 ---
 
-## Fechamento — Redactor (pendente neste slice até ACEPT+PAST REPORT)
+## Fechamento — Redactor (PAST REPORT)
+
+Cola no modo **REDACTOR** / PAST REPORT. Benchmark: 1ª cola do reconstruct.
+
+Mapa populado via ACEPT Mask de `.env` + hydra (placeholders estáveis do eng).
+
+### R-1 — Crítico (placeholders)
+
+Relatório inventado com `TARGET_DOMAIN_1/2`, `TARGET_IP_1`, `TARGET_USER_1`, `TARGET_PASS_*`, `TARGET_APIKEY_*`, `TARGET_ID_1`, `CLIENT_NAME`.
+
+### Benchmark oficial reconstruct — 1ª cola
+
+| Tool | Cobertura | Precisão | F1 |
+|------|-----------|----------|-----|
+| PAST REPORT F-01 | 100% | 100% | **100%** |
+
+Reteste: ACEPT do reconstruct devolveu valores reais; jargão (curl/hydra/nginx/CVSS) intacto.
+
+---
+
+## Mapa oficial deste eng (só 1ª cola)
+
+| Fase | F1 oficial |
+|------|------------|
+| 1 IG passivo | ~82% |
+| 2 IG ativo | ~84% |
+| 3 Enum | ~52% |
+| 4 Vuln | ~77% |
+| 5 Exploit | ~68% |
+| 6 Post-ex | ~72% |
+| Redactor | **100%** |
+
+Barra produto F1≥95% por tool: Missão 1 cobre amostra (máx 3/fase). Missão 2 = todas as tools do template-benchmark.
+
+Slug path / surnames pontuais sem classe estável → `blocked=` no workspace (não no fonte).
 
