@@ -188,6 +188,8 @@ USERS_BUILTIN = {
     "webmaster",
     "ftp",
     "anonymous",
+    # SSH / git protocol user — bare "git" must not be USER (eats ".git" paths)
+    "git",
 }
 
 # dotenv / .env: DB_PASSWORD=… (o \b de "password" falha em DB_PASSWORD)
@@ -198,12 +200,14 @@ RE_ENV_USERNAME = re.compile(
     r"(?im)^[A-Z][A-Z0-9_]*(?:USERNAME|_USER)\s*=\s*"
     r"([A-Za-z][A-Za-z0-9._-]{2,64})\s*$"
 )
-# smtp-user-enum: "IP: login exists"
+# smtp-user-enum: "host: login EXISTS" / "DOES NOT EXIST"
 RE_SMTP_USER_EXISTS = re.compile(
-    r"(?m)^[^\s:][\w.:]*:\s*([A-Za-z][A-Za-z0-9._-]{2,64})\s+exists\b"
+    r"(?im)^[^\s:][\w.:]*:\s*([A-Za-z][A-Za-z0-9._-]{2,64})\s+"
+    r"(?:DOES\s+NOT\s+EXIST|EXISTS)\b"
 )
 RE_VRFY_USER = re.compile(
-    r"(?i)\bVRFY\s+([A-Za-z][A-Za-z0-9._-]{2,64})\b"
+    # só na mesma linha — evita "VRFY\nWorker Processes" do smtp-user-enum
+    r"(?i)\bVRFY[ \t]+([A-Za-z][A-Za-z0-9._-]{2,64})\b"
 )
 SMTP_USER_NAO_CONTA = {
     "admin",
@@ -661,6 +665,8 @@ ALLOW_TECNICO = re.compile(
     r"|enum4linux|theHarvester|WhatWeb|Gobuster|rpcclient|LinkedIn|Google|Bing|DuckDuckGo"
     r"|crt\.sh|Registro\.br|Nic\.br|cert\.br|whois\.registro\.br"
     r"|Edge-?Security|Christian\s+Martorella"
+    # Gobuster banner authors / handles (tool credit — not client PERSON/ORG)
+    r"|OJ\s+Reeves|Christian\s+Mehlmauer|TheColonial|firefart"
     r"|Sun|Mon|Tue|Wed|Thu|Fri|Sat"
     r"|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
     r"|Security\s+Analyst|Sysadmin|Helpdesk|Business\s+Partner|External"
@@ -731,6 +737,8 @@ ALLOW_TECNICO = re.compile(
     r"|Strict-Transport-Security|X-Powered-By|X-Internal-Host"
     r"|OpenVPN|GlobalProtect|Palo\s+Alto|Let's\s+Encrypt"
     r"|DOCTYPE|nc\s+-nv|smtp-user-enum"
+    # smtp-user-enum banner labels (Presidio → PERSON/USER)
+    r"|Worker|Scan"
     r"|gitleaks|IONOS|IANA|Expiry(?:\s+Date)?"
     r"|Jump(?:\s+host)?"
     r"|[KMGT]i?B(?:/s)?"
@@ -1711,6 +1719,10 @@ class Sanitizer:
                             local, "USER", m.start(), m.start() + len(local), "regex"
                         )
                     )
+                elif local.casefold() in USERS_BUILTIN:
+                    # git@ / root@ / admin@ — protocol or system account;
+                    # never USER (would eat ".git") and not whole EMAIL
+                    pass
                 elif self._token_mapeavel(email, "EMAIL"):
                     # Local curto (falha gate USER) —
                     # mascara o endereço inteiro como EMAIL

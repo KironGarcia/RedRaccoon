@@ -236,7 +236,45 @@ F1 oficial da Fase 2 permanece **~84%**.
 
 ---
 
-## Fases 3+ — em curso / pendentes
+## Fase 3 — Enumeration
 
-Enum, vuln, exploit, post-ex e relatório ainda não corridos neste eng.
+Ferramentas: **gobuster** · **smtp-user-enum** · **GitLab API** (`curl`)
 
+### 3.4 Benchmark oficial — 1ª cola
+
+| Tool | Cobertura | Precisão | F1 |
+|------|-----------|----------|-----|
+| gobuster | ~100%* | ~33% | **~50%** |
+| smtp-user-enum | ~17% | ~25% | **~30%** |
+| GitLab API | ~80% | ~85% | **~75%** |
+| **Fase 3 (oficial)** | | | **~52%** |
+
+\*único ID de cliente no bloco gobuster = host. FPs: autores Gobuster.
+smtp-enum: vazou locals; FP Worker/Scan.
+GitLab: FP `git` USER; slug `vesper-oak` / `search=almeida` → `blocked=` (sem classe estável).
+
+### 3.5 Fixes (não é benchmark)
+
+| Erro | Onde | Correção |
+|------|------|----------|
+| OJ Reeves / Christian Mehlmauer / TheColonial / firefart | `sanitize.py` | `ALLOW_TECNICO` |
+| `host: user EXISTS` | `sanitize.py` | `RE_SMTP_USER_EXISTS` |
+| Worker / Scan | `sanitize.py` | `ALLOW_TECNICO` |
+| bare `git` USER | `sanitize.py` | `USERS_BUILTIN` |
+| slug path / search surname | workspace | `blocked=` (humano) |
+
+### 3.6 Reteste (nota — não oficial)
+
+| Tool | Reteste |
+|------|---------|
+| gobuster | fechou — autores intactos; host mascarado |
+| smtp-user-enum | fechou — 5 locals USER; Worker/Scan intactos |
+| GitLab API | fechou — sem `git` USER; slug ainda claro → `blocked=` |
+
+F1 oficial da Fase 3 permanece **~52%**.
+
+---
+
+## Fases 4+ — pendentes
+
+Vuln, exploit, post-ex e relatório ainda não corridos neste eng.
