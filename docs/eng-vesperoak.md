@@ -312,6 +312,42 @@ F1 oficial da Fase 4 permanece **~77%**.
 
 ---
 
-## Fases 5+ — pendentes
+## Fase 5 — Exploitation
 
-Exploit, post-ex e relatório ainda não corridos neste eng.
+Ferramentas: **hydra** · **curl** (login/JWT) · **Impacket GetUserSPNs**
+
+### 5.4 Benchmark oficial — 1ª cola
+
+| Tool | Cobertura | Precisão | F1 |
+|------|-----------|----------|-----|
+| hydra | ~100% | ~50% | **~60%** |
+| curl-auth | ~75% | ~100% | **~75%** |
+| Impacket | ~70% | ~100% | **~70%** |
+| **Fase 5 (oficial)** | | | **~68%** |
+
+### 5.5 Fixes (não é benchmark)
+
+| Erro | Onde | Correção |
+|------|------|----------|
+| van Hauser / David Maciejak / THC | `sanitize.py` | `ALLOW_TECNICO` |
+| `rockyou.txt` → PASS | `sanitize.py` | wordlist `*.txt` não é password |
+| JSON `"password"` | `sanitize.py` | `RE_JSON_PASSWORD` |
+| JWT `eyJ…` | `sanitize.py` | `RE_JWT` → APIKEY |
+| Impacket `user:'pass'` | `sanitize.py` | `RE_IMP_SLASH_USER_PASS` |
+| `svc_*` SPN Name | `sanitize.py` | `RE_SPN_TABLE_NAME` / `RE_SVC_ACCOUNT` |
+
+### 5.6 Reteste (nota — não oficial)
+
+| Tool | Reteste |
+|------|---------|
+| hydra | fechou |
+| curl-auth | fechou |
+| Impacket | fechou |
+
+F1 oficial da Fase 5 permanece **~68%**.
+
+---
+
+## Fases 6+ — pendentes
+
+Post-ex e relatório ainda não corridos neste eng.

@@ -93,11 +93,11 @@ RE_NTLMv2_HASH = re.compile(
     r"(?i)\b([A-Za-z0-9._$-]{1,64})::([A-Za-z0-9._$-]{0,64}):"
     r"([0-9a-fA-F]{16,}):([0-9a-fA-F]{32,}):([0-9a-fA-F]{8,})"
 )
-# DOMAIN/user:pass@host (GetADUsers.py estilo Impacket) — user SEM ponto (não é FQDN)
-# (?<!/) evita hydra http-post-form /users/sign_in:body:fail → user/pass
+# Impacket DOMAIN|FQDN/user:pass|'pass'|"pass" — (?<!/) evita hydra http-post-form
 RE_IMP_SLASH_USER_PASS = re.compile(
-    r"(?i)(?<!/)\b([A-Za-z0-9_-]+)/([A-Za-z][A-Za-z0-9_-]{2,32}):"
-    r"([^\s@:'\"]{4,128})"
+    r"(?i)(?<!/)\b([A-Za-z0-9][A-Za-z0-9._-]{0,80})/"
+    r"([A-Za-z][A-Za-z0-9._-]{2,32}):"
+    r"(?:'([^']{4,128})'|\"([^\"]{4,128})\"|([^\s@:'\"]{4,128}))"
 )
 # hydra: ^USER^ / ^PASS^ no módulo — não são credencial
 RE_HYDRA_MARCADOR = re.compile(r"\^(?:USER|PASS)\^", re.IGNORECASE)
@@ -384,6 +384,26 @@ RE_JSON_DISPLAYNAME = re.compile(
 # GitLab / API REST: "username":"hvoss"
 RE_JSON_USERNAME = re.compile(
     r'(?i)"username"\s*:\s*"([A-Za-z][A-Za-z0-9._-]{1,64})"'
+)
+# JSON: "password":"…" → PASSWORD (API login body)
+RE_JSON_PASSWORD = re.compile(
+    r'(?i)"password"\s*:\s*"([^"]+)"'
+)
+# JWT / compact token (eyJ….…) — APIKEY em JSON token e Bearer
+RE_JWT = re.compile(
+    r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+"
+)
+# Wordlist / -P file: rockyou.txt — NÃO é PASSWORD
+RE_WORDLIST_TXT = re.compile(r"(?i)^[\w.-]+\.txt$")
+# GetUserSPNs tabela: SPN … Name (svc_sql / svc_portal)
+RE_SPN_TABLE_NAME = re.compile(
+    r"(?im)^(?:MSSQLSvc|HTTP|CIFS|HOST|LDAP|SMTP|DNS|FTP|TERMSRV|WSMAN|"
+    r"GC|IMAP|POP|NFS|EXCHANGE)/\S+"
+    r"\s+([A-Za-z][A-Za-z0-9._$-]{2,64})\b"
+)
+# Contas de serviço svc_* (Name col / Principal) — classe, não cliente
+RE_SVC_ACCOUNT = re.compile(
+    r"(?i)\b(svc_[A-Za-z0-9][A-Za-z0-9_-]{1,32})\b"
 )
 # Nome antes de <email>
 RE_NOME_ANTES_EMAIL = re.compile(
@@ -783,6 +803,8 @@ ALLOW_TECNICO = re.compile(
     # kerbrute / Rubeus
     r"|kerbrute|Rubeus|Kerberoasting|Kerberoast|asktgt|userenum|passwordspray"
     r"|hydra|Hydra|Helm|http-post-form|https-post-form|mysql_sql"
+    # Hydra banner authors / project (tool credit — not client PERSON/ORG)
+    r"|van\s+Hauser|David\s+Maciejak|\bTHC\b"
     r"|SamAccountName|DistinguishedName|ServicePrincipalName|base64|kirbi"
     r"|VALID\s+USERNAME|VALID\s+LOGIN|Done\s+spraying|Ask\s+TGT|Dump\s+Ticket"
     r"|Target\s+LUID|Target\s+Domain|Domain\s+Controller|Using\s+credentials"
@@ -1358,6 +1380,9 @@ class Sanitizer:
             return False
         if RE_HYDRA_MARCADOR.fullmatch(s):
             return False
+        # -P rockyou.txt / users.txt — wordlist filename, not password
+        if RE_WORDLIST_TXT.fullmatch(s):
+            return False
         if s.upper().startswith("STATUS_"):
             return False
         if self._eh_ip(s):
@@ -1420,12 +1445,19 @@ class Sanitizer:
             _add(m.group(1))
 
         for m in RE_IMP_SLASH_USER_PASS.finditer(texto):
-            if m.group(1).casefold() in SPN_SERVICOS:
+            dom = m.group(1) or ""
+            if dom.casefold() in SPN_SERVICOS or dom.split(".")[0].casefold() in SPN_SERVICOS:
                 continue
+            senha = next((g for g in m.groups()[2:] if g), None)
             # hydra/form HTTP — não é DOMAIN/user:pass do Impacket
-            if re.search(r"[=&\[]", m.group(3) or ""):
+            if re.search(r"[=&\[]", senha or ""):
                 continue
             _add(m.group(2))
+
+        for m in RE_SPN_TABLE_NAME.finditer(texto):
+            _add(m.group(1))
+        for m in RE_SVC_ACCOUNT.finditer(texto):
+            _add(m.group(1))
 
         for m in RE_USER_SLASH_PASS.finditer(texto):
             # lado esquerdo do "user / senha"
@@ -1520,11 +1552,17 @@ class Sanitizer:
             _add_senha(m.group(2))
 
         for m in RE_IMP_SLASH_USER_PASS.finditer(texto):
-            if m.group(1).casefold() in SPN_SERVICOS:
+            dom = m.group(1) or ""
+            if dom.casefold() in SPN_SERVICOS or dom.split(".")[0].casefold() in SPN_SERVICOS:
                 continue
-            if re.search(r"[=&\[]", m.group(3) or ""):
+            senha = next((g for g in m.groups()[2:] if g), None)
+            if re.search(r"[=&\[]", senha or ""):
                 continue
-            _add_senha(m.group(3))
+            if senha:
+                _add_senha(senha)
+
+        for m in RE_JSON_PASSWORD.finditer(texto):
+            _add_senha(m.group(1))
 
         for m in RE_CLI_PASSWORD.finditer(texto):
             bruto = next((g for g in m.groups() if g), None)
@@ -1883,6 +1921,14 @@ class Sanitizer:
             start = m.start(0) + m.group(0).rfind(segredo)
             achados.append(
                 Achado(segredo, "APIKEY", start, start + len(segredo), "regex")
+            )
+        # JWT compact (eyJ….…) — JSON "token" e Bearer (onde RE_APIKEY não pegar)
+        for m in RE_JWT.finditer(texto):
+            tok = m.group(0)
+            if not self._token_mapeavel(tok, "APIKEY"):
+                continue
+            achados.append(
+                Achado(tok, "APIKEY", m.start(), m.end(), "regex")
             )
         # Cookie values (Set-Cookie / Cookie) — mascara VALUE, nunca o Name allow
         vistos_cookie: set[tuple[int, int]] = set()
