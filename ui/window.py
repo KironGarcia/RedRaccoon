@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import pyperclip
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, Qt
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt
 from PySide6.QtGui import (
-    QCursor,
     QGuiApplication,
     QMouseEvent,
     QResizeEvent,
@@ -25,7 +24,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QPushButton,
-    QSizeGrip,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -72,7 +70,7 @@ class ModoUI(Enum):
 
 
 class RacoonWindow(QMainWindow):
-    """Janela única do Racoon-Mask — móvel, redimensionável, sem always-on-top."""
+    """Janela única do Racoon-Mask — móvel, tamanho fixo, sem always-on-top."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -84,16 +82,12 @@ class RacoonWindow(QMainWindow):
         self.pendente_recon: ResultadoReconstruct | None = None
         self._pasta_anterior: Path | None = None
         self._drag_pos: QPoint | None = None
-        self._resize_edges: int = 0  # bitmask EDGE_L/R/T/B
-        self._resize_origin: QPoint | None = None
-        self._resize_geo: QRect | None = None
 
         self.setWindowTitle("Racoon-Mask")
         self.setWindowIcon(icone_janela())
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setMinimumSize(T.LARGURA_MIN, T.ALTURA_MIN)
-        self.setMouseTracking(True)
+        self.setFixedSize(T.LARGURA_JANELA, T.ALTURA_JANELA)
         self.setStyleSheet(T.STYLESHEET)
 
         self._montar_layout()
@@ -113,19 +107,8 @@ class RacoonWindow(QMainWindow):
         outer = QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-
-        # Topo: só grip esquerdo — o X fica no canto (círculo azul)
-        top_grips = QHBoxLayout()
-        top_grips.setContentsMargins(2, 2, 2, 0)
-        top_grips.setSpacing(2)
-        grip_tl = QSizeGrip(root)
-        grip_tl.setFixedSize(14, 14)
-        top_grips.addWidget(
-            grip_tl, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
-        top_grips.addStretch(1)
-        top_grips.addSpacing(T.MARGEM_FECHAR * 2 + 20)
-        outer.addLayout(top_grips)
+        # Respiro do X no canto (antes era a faixa do grip de resize)
+        outer.addSpacing(T.MARGEM_FECHAR + 6)
 
         self.btn_fechar = QPushButton("✕", root)
         self.btn_fechar.setObjectName("fechar")
@@ -268,17 +251,7 @@ class RacoonWindow(QMainWindow):
             self.btn_past, T.PAST_STRETCH, Qt.AlignmentFlag.AlignVCenter
         )
         col.addWidget(barra)
-
-        bot_grips = QHBoxLayout()
-        bot_grips.setContentsMargins(2, 0, 2, 2)
-        grip_bl = QSizeGrip(root)
-        grip_bl.setFixedSize(14, 14)
-        grip_br = QSizeGrip(root)
-        grip_br.setFixedSize(14, 14)
-        bot_grips.addWidget(grip_bl, 0, Qt.AlignmentFlag.AlignLeft)
-        bot_grips.addStretch(1)
-        bot_grips.addWidget(grip_br, 0, Qt.AlignmentFlag.AlignRight)
-        outer.addLayout(bot_grips)
+        outer.addSpacing(6)
 
         self._posicionar_fechar()
 
@@ -295,27 +268,21 @@ class RacoonWindow(QMainWindow):
         self.btn_fechar.raise_()
 
     def _restaurar_geometria(self) -> None:
+        """Tamanho de fábrica; só restaura o canto se o usuário já moveu a janela."""
+        self.setFixedSize(T.LARGURA_JANELA, T.ALTURA_JANELA)
         p = ui_prefs.carregar()
-        w = int(p.get("width", T.LARGURA_JANELA))
-        h = int(p.get("height", T.ALTURA_JANELA))
-        w = max(T.LARGURA_MIN, w)
-        h = max(T.ALTURA_MIN, h)
-        self.resize(w, h)
-
         screen = QGuiApplication.primaryScreen()
         if "x" in p and "y" in p:
             self.move(int(p["x"]), int(p["y"]))
         elif screen:
             geo = screen.availableGeometry()
-            x = geo.x() + geo.width() - w - T.MARGEM_DIREITA
-            y = geo.y() + geo.height() - h - T.MARGEM_INFERIOR
+            x = geo.x() + geo.width() - T.LARGURA_JANELA - T.MARGEM_DIREITA
+            y = geo.y() + geo.height() - T.ALTURA_JANELA - T.MARGEM_INFERIOR
             self.move(max(geo.x(), x), max(geo.y(), y))
 
     def _salvar_geometria(self) -> None:
         ui_prefs.salvar(
             {
-                "width": self.width(),
-                "height": self.height(),
                 "x": self.x(),
                 "y": self.y(),
             }
@@ -376,41 +343,13 @@ class RacoonWindow(QMainWindow):
         self.txt_questions.clear()
 
     # ------------------------------------------------------------------
-    # Bordas: cursor + resize (esqueleto inteiro, não só canto)
+    # Arrastar a janela (tamanho fixo — sem resize)
     # ------------------------------------------------------------------
-
-    def _edges_em(self, pos: QPoint) -> int:
-        m = T.BORDA_RESIZE
-        edges = 0
-        if pos.x() <= m:
-            edges |= T.EDGE_L
-        if pos.x() >= self.width() - m:
-            edges |= T.EDGE_R
-        if pos.y() <= m:
-            edges |= T.EDGE_T
-        if pos.y() >= self.height() - m:
-            edges |= T.EDGE_B
-        return edges
-
-    def _cursor_para_edges(self, edges: int) -> Qt.CursorShape:
-        left = bool(edges & T.EDGE_L)
-        right = bool(edges & T.EDGE_R)
-        top = bool(edges & T.EDGE_T)
-        bottom = bool(edges & T.EDGE_B)
-        if (top and left) or (bottom and right):
-            return Qt.CursorShape.SizeFDiagCursor
-        if (top and right) or (bottom and left):
-            return Qt.CursorShape.SizeBDiagCursor
-        if left or right:
-            return Qt.CursorShape.SizeHorCursor
-        if top or bottom:
-            return Qt.CursorShape.SizeVerCursor
-        return Qt.CursorShape.ArrowCursor
 
     def _widget_bloqueia_drag(self, filho: QWidget | None) -> bool:
         if filho is None:
             return False
-        if isinstance(filho, (QPushButton, QLineEdit, QTextEdit, QSizeGrip)):
+        if isinstance(filho, (QPushButton, QLineEdit, QTextEdit)):
             return True
         nome = filho.objectName()
         return nome in {
@@ -430,13 +369,6 @@ class RacoonWindow(QMainWindow):
             super().mousePressEvent(event)
             return
         pos = event.position().toPoint()
-        edges = self._edges_em(pos)
-        if edges:
-            self._resize_edges = edges
-            self._resize_origin = event.globalPosition().toPoint()
-            self._resize_geo = QRect(self.geometry())
-            event.accept()
-            return
         filho = self.childAt(pos)
         if self._widget_bloqueia_drag(filho):
             super().mousePressEvent(event)
@@ -447,22 +379,6 @@ class RacoonWindow(QMainWindow):
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        pos = event.position().toPoint()
-        if self._resize_edges and self._resize_origin and self._resize_geo:
-            delta = event.globalPosition().toPoint() - self._resize_origin
-            g = QRect(self._resize_geo)
-            if self._resize_edges & T.EDGE_L:
-                g.setLeft(g.left() + delta.x())
-            if self._resize_edges & T.EDGE_R:
-                g.setRight(g.right() + delta.x())
-            if self._resize_edges & T.EDGE_T:
-                g.setTop(g.top() + delta.y())
-            if self._resize_edges & T.EDGE_B:
-                g.setBottom(g.bottom() + delta.y())
-            if g.width() >= T.LARGURA_MIN and g.height() >= T.ALTURA_MIN:
-                self.setGeometry(g)
-            event.accept()
-            return
         if (
             self._drag_pos is not None
             and event.buttons() & Qt.MouseButton.LeftButton
@@ -470,25 +386,18 @@ class RacoonWindow(QMainWindow):
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
             return
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            edges = self._edges_em(pos)
-            self.setCursor(QCursor(self._cursor_para_edges(edges)))
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
-            if self._drag_pos is not None or self._resize_edges:
+            if self._drag_pos is not None:
                 self._salvar_geometria()
             self._drag_pos = None
-            self._resize_edges = 0
-            self._resize_origin = None
-            self._resize_geo = None
         super().mouseReleaseEvent(event)
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._posicionar_fechar()
-        self._salvar_geometria()
 
     # ------------------------------------------------------------------
     # Boot

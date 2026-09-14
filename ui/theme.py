@@ -2,19 +2,11 @@
 # Cômodo: cores e medidas do esqueleto retro/minimal (sketch).
 # Por quê: pele depois; agora proporção estável e auditável.
 
-# Máscaras de borda para resize (ints simples — Qt.Edge quebra com int() no PySide6)
-EDGE_L = 1
-EDGE_R = 2
-EDGE_T = 4
-EDGE_B = 8
-
-LARGURA_JANELA = 600
+# Tamanho único da janela (não redimensiona — evita layout quebrado)
+LARGURA_JANELA = 750
 ALTURA_JANELA = 300
-LARGURA_MIN = 480
-ALTURA_MIN = 280
 MARGEM_DIREITA = 28
 MARGEM_INFERIOR = 56
-BORDA_RESIZE = 8
 # Espaço à direita do balão (X no canto + respiro)
 MARGEM_BALAO_DIR = 40
 # X equidistante do topo e da direita (círculo azul do sketch)
@@ -227,11 +219,6 @@ QLineEdit#questions {{
 QFrame#barra {{
     background-color: {COR_BARRA};
     border-radius: 8px;
-}}
-QSizeGrip {{
-    background: transparent;
-    width: 14px;
-    height: 14px;
 }}
 /* Scroll do balão — azul da app, sem setas nem bordas cinza */
 QTextEdit#balao QScrollBar:vertical {{

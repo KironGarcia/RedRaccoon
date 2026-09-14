@@ -1,6 +1,6 @@
 # session/prefs.py
-# Cômodo: preferências da UI (tamanho/posição da janela).
-# Por quê: o último resize vira o padrão da próxima abertura.
+# Cômodo: preferências da UI (só posição da janela).
+# Por quê: o tamanho é fixo de fábrica; guardar o canto em que o usuário deixou.
 
 from __future__ import annotations
 
