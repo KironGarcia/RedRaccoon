@@ -4,6 +4,8 @@
 
 # Tamanho único da janela (não redimensiona — evita layout quebrado)
 LARGURA_JANELA = 750
+# +16 px: o campo de setup pede 2 mm em cima e 2 mm embaixo.
+# Sem isto a janela fixa espreme o marco e a altura não aparece.
 ALTURA_JANELA = 300
 MARGEM_DIREITA = 28
 MARGEM_INFERIOR = 56
@@ -17,16 +19,25 @@ BALAO_ALTURA_MIN = 148
 # Cauda do balão (triângulo → Racoon)
 CAUDA_LARGURA = 14
 CAUDA_ALTURA = 22
-# Barra inferior: PAST CTA (um pouco mais curto que o sketch cheio)
-QUESTIONS_STRETCH = 3
-PAST_STRETCH = 2
+# Barra inferior: no setup o campo estica; depois os dois botões dividem igual
+QUESTIONS_STRETCH = 1
+PAST_STRETCH = 1
 # Faixa ACEPT/CANCEL / YES/NO
-ACOES_ALTURA = 32
+# 2 mm a menos que antes: o balão desce e o ACEPT fica abaixo dele
+ACOES_ALTURA = 24
 # ~1 mm e ~2 mm acima da base 12px (≈4 px/mm @96dpi)
 FONTE_ACEPT_CANCEL = 16
 FONTE_YES_NO = 20
-# Altura única da barra (box / seta / PAST alinhados)
+# Altura única da barra (seta / botões)
 BARRA_CTRL_ALTURA = 44
+# Campo de setup: 1 mm a menos em cima e embaixo (≈4 px/mm)
+ALTURA_CAMPO = BARRA_CTRL_ALTURA - 2
+# Vão sob a barra no setup: 3 mm. Botões ficam mais altos.
+FOLGA_SETUP = 12
+# 3 mm entre os botões e o chão. Só na tela dos botões.
+FOLGA_BOTOES = 12
+# 5 mm entre os dois botões (o layout ainda soma 6 px)
+ENTRE_BOTOES = 14
 # Modo Mask / Redactor — cabem sob o avatar (caixa vermelha do sketch)
 # 1 mm ≈ 4 px @96dpi
 MODO_BTN_LARGURA = AVATAR_TAM - 6
@@ -54,7 +65,7 @@ COR_CANCEL_HOVER = "#ffffff"
 
 # Alinhado com core.queries.LIMITE_CHARS (lista confidencial grande)
 LIMITE_QUESTIONS = 4000
-PLACEHOLDER_QUESTIONS = "Enter confidential information or questions here..."
+PLACEHOLDER_QUESTIONS = "Enter sensitive information"
 FONTE_BALAO = "DejaVu Sans Mono, Consolas, monospace"
 
 STYLESHEET = f"""
@@ -109,7 +120,7 @@ QPushButton#voltar {{
 QPushButton#voltar:hover {{
     color: {COR_ACEPT_HOVER};
 }}
-QPushButton#past {{
+QPushButton#past, QPushButton#unmask {{
     background: qlineargradient(
         x1:0, y1:0, x2:0, y2:1,
         stop:0 #2f6880,
@@ -120,12 +131,18 @@ QPushButton#past {{
     border: 1px solid #3a7a96;
     border-radius: 7px;
     font-weight: 400;
-    font-size: 18px;
-    letter-spacing: 1px;
-    padding: 0px 10px;
-    min-width: 149px;
+    letter-spacing: 0px;
+    padding: 0px 8px;
 }}
-QPushButton#past:hover {{
+QPushButton#past {{
+    margin-left: 20px;
+    margin-right: 0px;
+}}
+QPushButton#unmask {{
+    margin-left: 0px;
+    margin-right: 20px;
+}}
+QPushButton#past:hover, QPushButton#unmask:hover {{
     background: qlineargradient(
         x1:0, y1:0, x2:0, y2:1,
         stop:0 #3a7a96,
@@ -135,7 +152,7 @@ QPushButton#past:hover {{
     border: 1px solid #4a8fb0;
     color: #ffffff;
 }}
-QPushButton#past:pressed {{
+QPushButton#past:pressed, QPushButton#unmask:pressed {{
     background: #1a3a4a;
     border: 1px solid #254f63;
     padding-top: 2px;
@@ -211,14 +228,14 @@ QLineEdit#questions {{
     color: {COR_TEXTO_CLARO};
     border: 1px solid {COR_BORDA_INPUT};
     border-radius: 6px;
-    padding: 8px 12px;
-    font-size: 13px;
-    min-height: 22px;
+    padding: 4px 12px;
+    font-size: 17px;
+    min-height: 32px;
     selection-background-color: {COR_AZUL};
 }}
 QFrame#barra {{
-    background-color: {COR_BARRA};
-    border-radius: 8px;
+    background: transparent;
+    border: none;
 }}
 /* Scroll do balão — azul da app, sem setas nem bordas cinza */
 QTextEdit#balao QScrollBar:vertical {{

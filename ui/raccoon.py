@@ -128,7 +128,11 @@ class BotaoEnviar(QPushButton):
     def __init__(self, tamanho: int = 44, parent=None) -> None:
         super().__init__("", parent)
         self.setObjectName("send")
-        self.setFixedSize(tamanho, tamanho)
+        # Altura fixa; a largura encolhe na troca para os botões de colar.
+        self._lado = tamanho
+        self.setFixedHeight(tamanho)
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(tamanho)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Send")
 

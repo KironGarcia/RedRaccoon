@@ -681,6 +681,12 @@ ALLOW_TECNICO = re.compile(
     r"|Colaborador|Issuer|Public\s+Key|Meta-Author"
     r"|UncommonHeaders|HTTPServer|PasswordField|HTML5"
     r"|Strict-Transport-Security|X-Powered-By|X-Internal-Host"
+    r"|Content-Type|Content-Length|Content-Disposition|Content-Encoding"
+    r"|Content-Language|Content-Security-Policy|Cache-Control"
+    r"|Transfer-Encoding|Accept-Ranges|Accept-Encoding|Accept-Language"
+    r"|Last-Modified|WWW-Authenticate|User-Agent|Set-Cookie|Keep-Alive"
+    r"|X-Frame-Options|X-Content-Type-Options|X-XSS-Protection"
+    r"|Referrer-Policy|Access-Control-Allow-Origin"
     r"|OpenVPN|GlobalProtect|Palo\s+Alto|Let's\s+Encrypt"
     r"|DOCTYPE|nc\s+-nv|smtp-user-enum"
     r"|gitleaks|IONOS|IANA|Expiry(?:\s+Date)?"
@@ -872,6 +878,10 @@ class Sanitizer:
                     texto, m.end()
                 ):
                     continue
+                if tipo in {"ORG", "PERSON"} and self._eh_nome_de_header_http(
+                    texto, m.start(), m.end()
+                ):
+                    continue
                 achados.append(
                     Achado(
                         real_value=texto[m.start() : m.end()],
@@ -939,6 +949,10 @@ class Sanitizer:
                     texto, m.end()
                 ):
                     continue
+                if tipo in {"ORG", "PERSON"} and self._eh_nome_de_header_http(
+                    texto, m.start(), m.end()
+                ):
+                    continue
                 achados.append(
                     Achado(
                         real_value=texto[m.start() : m.end()],
@@ -983,6 +997,13 @@ class Sanitizer:
             r"PasswordField|Issuer|Public\s+Key|Colaborador|"
             r"VRFY|ETRN|STARTTLS|"
             r"Strict-Transport-Security|X-Powered-By|X-Internal-Host|"
+            r"Content-Type|Content-Length|Content-Disposition|"
+            r"Content-Encoding|Content-Language|Content-Security-Policy|"
+            r"Cache-Control|Transfer-Encoding|Accept-Ranges|"
+            r"Accept-Encoding|Accept-Language|Last-Modified|"
+            r"WWW-Authenticate|User-Agent|Set-Cookie|Keep-Alive|"
+            r"X-Frame-Options|X-Content-Type-Options|X-XSS-Protection|"
+            r"Referrer-Policy|Access-Control-Allow-Origin|"
             r"X-[A-Za-z0-9-]+|"
             r"Expiry(?:\s+Date)?|Jump(?:\s+host)?|"
             r"[KMGT]i?B(?:/s)?|"
@@ -1001,6 +1022,22 @@ class Sanitizer:
         if re.fullmatch(r"(?i)DOCTYPE", v):
             return True
         return False
+
+    @staticmethod
+    def _eh_nome_de_header_http(texto: str, start: int, end: int) -> bool:
+        """Campo HTTP no início da linha (`Content-Type:`). Não é marca de cliente."""
+        if start < 0 or end > len(texto) or start >= end:
+            return False
+        nome = texto[start:end]
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", nome):
+            return False
+        i = start
+        while i > 0 and texto[i - 1] in " \t|":
+            i -= 1
+        if i > 0 and texto[i - 1] not in "\n\r":
+            return False
+        resto = texto[end : end + 2]
+        return resto.startswith(":") or resto.startswith(" :")
 
     @staticmethod
     def _normalizar_span_dominio(valor: str) -> str:
@@ -1783,6 +1820,10 @@ class Sanitizer:
             ):
                 continue
             if self._eh_rotulo_http_ou_scan(trecho):
+                continue
+            if tipo in {"PERSON", "ORG"} and self._eh_nome_de_header_http(
+                texto, r.start, r.end
+            ):
                 continue
             if tipo == "DOMAIN":
                 trecho = self._normalizar_span_dominio(trecho)

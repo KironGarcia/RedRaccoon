@@ -10,8 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import pyperclip
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt
+from PySide6.QtCore import (
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPoint,
+    QPropertyAnimation,
+    Qt,
+)
 from PySide6.QtGui import (
+    QFontMetrics,
     QGuiApplication,
     QMouseEvent,
     QResizeEvent,
@@ -118,13 +125,16 @@ class RacoonWindow(QMainWindow):
         self.btn_fechar.raise_()
 
         col = QVBoxLayout()
-        col.setContentsMargins(12, 0, 8, 4)
+        col.setContentsMargins(12, 0, 8, 0)
         col.setSpacing(4)
         outer.addLayout(col, 1)
+        self._col = col
 
-        topo = QHBoxLayout()
-        # Pouco espaço avatar→cauda; cauda colada no balão
-        topo.setSpacing(4)
+        # Avatar fora da coluna que encolhe: ACEPT/YES não sobem o MASK.
+        miolo = QHBoxLayout()
+        miolo.setContentsMargins(0, 0, 0, 0)
+        miolo.setSpacing(4)
+        col.addLayout(miolo, 1)
         self.avatar = AvatarRacoon(T.AVATAR_TAM)
         self.btn_mask = QPushButton("MASK")
         self.btn_mask.setObjectName("modo")
@@ -182,12 +192,16 @@ class RacoonWindow(QMainWindow):
         balao_row.setSpacing(0)
         balao_row.addLayout(cauda_col)
         balao_row.addWidget(self.lbl_balao, 1)
+        balao_row.addSpacing(T.MARGEM_BALAO_DIR)
 
-        topo.addLayout(col_avatar, 0)
-        topo.setAlignment(col_avatar, Qt.AlignmentFlag.AlignTop)
-        topo.addLayout(balao_row, 1)
-        topo.addSpacing(T.MARGEM_BALAO_DIR)
-        col.addLayout(topo, 1)
+        miolo.addLayout(col_avatar, 0)
+        miolo.setAlignment(col_avatar, Qt.AlignmentFlag.AlignTop)
+        direita = QVBoxLayout()
+        direita.setContentsMargins(0, 0, 0, 0)
+        direita.setSpacing(4)
+        direita.addLayout(balao_row, 1)
+        miolo.addLayout(direita, 1)
+        self._direita = direita
 
         acoes_bar = QWidget()
         acoes_bar.setFixedHeight(T.ACOES_ALTURA)
@@ -207,42 +221,80 @@ class RacoonWindow(QMainWindow):
         self.btn_back.setObjectName("voltar")
         self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_back.clicked.connect(self._on_back)
-        acoes.addWidget(self.btn_acept)
-        acoes.addWidget(self.btn_cancel)
-        acoes.addWidget(self.btn_back)
-        acoes.addSpacing(T.MARGEM_BALAO_DIR)
-        col.addWidget(acoes_bar, 0)
+        # Fora do layout: o vão é de 2 mm e o texto não pode ser cortado.
+        for botao in (self.btn_acept, self.btn_cancel, self.btn_back):
+            botao.setParent(self.centralWidget())
+        # Faixa sob o balão, não sob o raccoon. A largura segue o balão.
+        acoes.setContentsMargins(T.CAUDA_LARGURA, 0, T.MARGEM_BALAO_DIR, 0)
+        acoes.setAlignment(Qt.AlignmentFlag.AlignBottom)
+        self._acoes_bar = acoes_bar
+        direita.addWidget(acoes_bar, 0)
         self._mostrar_decisao(False)
 
         barra = QFrame()
         barra.setObjectName("barra")
         barra_lay = QHBoxLayout(barra)
-        barra_lay.setContentsMargins(6, 6, 6, 6)
+        self._barra_lay = barra_lay
+        barra_lay.setContentsMargins(6, 12, 6, 0)
         barra_lay.setSpacing(6)
 
         self.txt_questions = QLineEdit()
         self.txt_questions.setObjectName("questions")
         self.txt_questions.setPlaceholderText(T.PLACEHOLDER_QUESTIONS)
         self.txt_questions.setMaxLength(T.LIMITE_QUESTIONS)
-        self.txt_questions.setFixedHeight(T.BARRA_CTRL_ALTURA)
+        self.txt_questions.setFixedHeight(T.ALTURA_CAMPO)
         self.txt_questions.returnPressed.connect(self._on_enviar)
 
         self.btn_send = BotaoEnviar(T.BARRA_CTRL_ALTURA)
         self.btn_send.clicked.connect(self._on_enviar)
 
-        self.btn_past = QPushButton("PAST INPUT")
+        self.btn_past = QPushButton("Mask sensitive input")
         self.btn_past.setObjectName("past")
         self.btn_past.setFixedHeight(T.BARRA_CTRL_ALTURA)
-        self.btn_past.setFont(fonte_past(17))
+        self.btn_past.setMinimumWidth(0)
+        self.btn_past.setMaximumWidth(0)
+        self.btn_past.setFont(fonte_past(13))
         self.btn_past.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_past.setToolTip("Paste scan / sensitive output from clipboard")
+        self.btn_past.setToolTip("Mask clipboard — scan and sensitive output")
         self.btn_past.clicked.connect(self._on_past_input)
         self._past_opacidade = QGraphicsOpacityEffect(self.btn_past)
-        self._past_opacidade.setOpacity(1.0)
+        self._past_opacidade.setOpacity(0.0)
         self.btn_past.setGraphicsEffect(self._past_opacidade)
-        self._past_anim: QPropertyAnimation | None = None
+        self.btn_past.setVisible(False)
 
-        # Mesma altura + AlignVCenter = barra alinhada (PAST não “desce”)
+        self.btn_unmask = QPushButton("Unmask model output")
+        self.btn_unmask.setObjectName("unmask")
+        self.btn_unmask.setFixedHeight(T.BARRA_CTRL_ALTURA)
+        self.btn_unmask.setMinimumWidth(0)
+        self.btn_unmask.setMaximumWidth(0)
+        self.btn_unmask.setFont(fonte_past(13))
+        self.btn_unmask.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_unmask.setToolTip(
+            "Unmask clipboard — model reply back to real values"
+        )
+        self.btn_unmask.clicked.connect(self._on_unmask)
+        self._unmask_opacidade = QGraphicsOpacityEffect(self.btn_unmask)
+        self._unmask_opacidade.setOpacity(0.0)
+        self.btn_unmask.setGraphicsEffect(self._unmask_opacidade)
+        self.btn_unmask.setVisible(False)
+
+        self._questions_opacidade = QGraphicsOpacityEffect(self.txt_questions)
+        self._questions_opacidade.setOpacity(1.0)
+        self.txt_questions.setGraphicsEffect(self._questions_opacidade)
+        self.txt_questions.setMinimumWidth(0)
+        self._send_opacidade = QGraphicsOpacityEffect(self.btn_send)
+        self._send_opacidade.setOpacity(1.0)
+        self.btn_send.setGraphicsEffect(self._send_opacidade)
+
+        self._past_anim: QPropertyAnimation | None = None
+        self._unmask_anim: QPropertyAnimation | None = None
+        self._barra_operacao = False
+        self._barra_grupo: QParallelAnimationGroup | None = None
+        self._mask_grupo: QParallelAnimationGroup | None = None
+        self._barra_geracao = 0
+        self._mask_geracao = 0
+
+        # Campo esticado no setup; Enter fica ao lado. Botões nascem com largura 0.
         barra_lay.addWidget(
             self.txt_questions, T.QUESTIONS_STRETCH, Qt.AlignmentFlag.AlignVCenter
         )
@@ -250,8 +302,18 @@ class RacoonWindow(QMainWindow):
         barra_lay.addWidget(
             self.btn_past, T.PAST_STRETCH, Qt.AlignmentFlag.AlignVCenter
         )
+        self.entre_botoes = QWidget()
+        self.entre_botoes.setMinimumWidth(0)
+        self.entre_botoes.setMaximumWidth(0)
+        barra_lay.addWidget(self.entre_botoes, 0, Qt.AlignmentFlag.AlignVCenter)
+        barra_lay.addWidget(
+            self.btn_unmask, T.PAST_STRETCH, Qt.AlignmentFlag.AlignVCenter
+        )
         col.addWidget(barra)
-        outer.addSpacing(6)
+        # Setup cola na base (2 mm). Com os botões, a folga volta a ser maior.
+        self._folga_baixo = QWidget()
+        self._folga_baixo.setFixedHeight(T.FOLGA_SETUP)
+        outer.addWidget(self._folga_baixo)
 
         self._posicionar_fechar()
 
@@ -307,6 +369,7 @@ class RacoonWindow(QMainWindow):
             self._mostrar_decisao(True, rotulos=("ACEPT", "CANCEL"))
         else:
             self._mostrar_decisao(False)
+        self._sincronizar_barra()
 
     def _aviso_e_voltar(self, texto: str) -> None:
         """Aviso de passo errado — BACK devolve o diálogo anterior."""
@@ -335,9 +398,11 @@ class RacoonWindow(QMainWindow):
         if mostrar_voltar:
             self.btn_acept.setVisible(False)
             self.btn_cancel.setVisible(False)
-            return
-        self.btn_acept.setVisible(visivel)
-        self.btn_cancel.setVisible(visivel)
+        else:
+            self.btn_acept.setVisible(visivel)
+            self.btn_cancel.setVisible(visivel)
+        self._decisao_visivel = visivel or mostrar_voltar
+        self._aplicar_faixa()
 
     def _limpar_input(self) -> None:
         self.txt_questions.clear()
@@ -398,6 +463,47 @@ class RacoonWindow(QMainWindow):
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._posicionar_fechar()
+        self._posicionar_decisao()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._posicionar_decisao()
+
+    def _medida_opcao(self, botao: QPushButton) -> tuple[int, int]:
+        """Largura pelo texto. sizeHint inchava e empilhava ACEPT em cima de CANCEL."""
+        fonte = QFontMetrics(botao.font())
+        return fonte.horizontalAdvance(botao.text()) + 28, fonte.height() + 8
+
+    def _posicionar_decisao(self) -> None:
+        """YES/ACEPT no vão entre o balão e os botões, sem mudar o tamanho deles."""
+        if not getattr(self, "_decisao_visivel", False):
+            return
+        root = self.centralWidget()
+        if root is None or not hasattr(self, "lbl_balao"):
+            return
+        bal_b = self.lbl_balao.mapTo(root, QPoint(0, self.lbl_balao.height())).y()
+        ancora = self.btn_past if getattr(self, "_barra_operacao", False) else self.txt_questions
+        btn_t = ancora.mapTo(root, QPoint(0, 0)).y()
+        meio = (bal_b + btn_t) // 2
+        # Não usar isVisible(): no boot a janela ainda não abriu e a lista saía vazia.
+        if self.btn_back.isVisible() and not self.btn_acept.isVisible():
+            visiveis = [self.btn_back]
+        elif self._decisao_visivel:
+            visiveis = [self.btn_acept, self.btn_cancel]
+        else:
+            return
+        medidas = [self._medida_opcao(b) for b in visiveis]
+        total = sum(w for w, _ in medidas) + 10 * (len(medidas) - 1)
+        bal_r = self.lbl_balao.mapTo(root, QPoint(self.lbl_balao.width(), 0)).x()
+        x = max(0, bal_r - total - 10)
+        for b, (wdt, h) in zip(visiveis, medidas):
+            # Dentro da faixa escura, sem montar um no outro nem no balão.
+            y = min(meio - h // 2, btn_t - h - 2)
+            y = max(y, bal_b + 2)
+            b.setFixedSize(wdt, h)
+            b.setGeometry(x, y, wdt, h)
+            b.raise_()
+            x += wdt + 10
 
     # ------------------------------------------------------------------
     # Boot
@@ -462,20 +568,18 @@ class RacoonWindow(QMainWindow):
             self.fase = FaseUI.PRONTO
 
     def _aplicar_chrome_modo(self) -> None:
-        """PAST muda de nome com o modo — o olho vê em que mundo está."""
+        """Mask mostra os dois botões; Redactor só o Unmask."""
         mask = self.modo == ModoUI.MASK
         self.btn_mask.setChecked(mask)
         self.btn_redactor.setChecked(not mask)
-        if mask:
-            self.btn_past.setText("PAST INPUT")
-            self.btn_past.setToolTip(
-                "Paste scan / sensitive output from clipboard"
-            )
-        else:
-            self.btn_past.setText("PAST REPORT")
-            self.btn_past.setToolTip(
-                "Paste masked report text — restore real client values"
-            )
+        self.btn_past.setText("Mask sensitive input")
+        self.btn_past.setToolTip("Mask clipboard — scan and sensitive output")
+        self.btn_unmask.setText("Unmask model output")
+        self.btn_unmask.setToolTip(
+            "Unmask clipboard — model reply back to real values"
+        )
+        if self._barra_operacao:
+            self._animar_so_mask()
 
     def _fala_mask_atual(self) -> None:
         if self.fase == FaseUI.OLD_WORKSPACE:
@@ -629,30 +733,295 @@ class RacoonWindow(QMainWindow):
         self.fase = FaseUI.WIZARD_NOME
         self._falar(D.MSG_WELCOME_NAME)
 
-    def _feedback_past_click(self) -> None:
+    def _aplicar_faixa(self) -> None:
+        """ACEPT/YES ocupam um vão já aberto sob o balão. O raccoon não sobe."""
+        if not hasattr(self, "_acoes_bar"):
+            return
+        aberta = getattr(self, "_barra_operacao", False) or getattr(
+            self, "_decisao_visivel", False
+        )
+        self._acoes_bar.setVisible(True)
+        # Botões: 2 mm. Tela inicial: mais 3 mm para ACEPT/CANCEL não montarem na barra.
+        if not aberta:
+            altura_faixa = 0
+        elif getattr(self, "_barra_operacao", False):
+            # 2 mm a menos de balão, mais o que os botões descem: o YES cabe no meio.
+            altura_faixa = 32
+        else:
+            altura_faixa = 20
+        self._acoes_bar.setFixedHeight(altura_faixa)
+        if hasattr(self, "_direita") and hasattr(self, "_col"):
+            self._direita.setSpacing(0 if aberta else 4)
+            self._col.setSpacing(0 if aberta else 4)
+        self._posicionar_decisao()
+
+    def _fonte_botoes(self) -> None:
+        """Maior fonte que cabe nos dois rótulos, com 1 mm longe da borda."""
+        texto = "Unmask model output"
+        folga = 4
+        largo = max(self.btn_past.width(), self.btn_unmask.width())
+        if largo < 80:
+            return
+        # Margem lateral do estilo + padding + borda + 1 mm de cada lado.
+        util_w = largo - 20 - 16 - 2 - (folga * 2)
+        util_h = T.BARRA_CTRL_ALTURA - (folga * 2)
+        escolhida = 13
+        for px in range(util_h, 12, -1):
+            fonte = fonte_past(12)
+            fonte.setPixelSize(px)
+            caixa = QFontMetrics(fonte).boundingRect(texto)
+            if caixa.width() <= util_w and caixa.height() <= util_h:
+                escolhida = px
+                break
+        # Pedido fechado: 19 px. O resto da janela não muda.
+        escolhida = 19
+        fonte = fonte_past(12)
+        fonte.setPixelSize(escolhida)
+        self.btn_past.setFont(fonte)
+        self.btn_unmask.setFont(fonte)
+
+    def _margem_botoes(self, operar: bool) -> None:
+        """Área dos botões na largura do balão. O campo de setup continua largo."""
+        if not hasattr(self, "_barra_lay"):
+            return
+        topo = 0 if getattr(self, "_decisao_visivel", False) or operar else 12
+        if operar:
+            esquerda = T.AVATAR_TAM + 4 + T.CAUDA_LARGURA
+            self._barra_lay.setContentsMargins(esquerda, topo, T.MARGEM_BALAO_DIR, 0)
+        else:
+            self._barra_lay.setContentsMargins(6, topo, 6, 0)
+
+    def _sincronizar_barra(self) -> None:
+        """Setup = campo. Pronto = botões. Burn não mexe na barra."""
+        if self.fase == FaseUI.BURN:
+            return
+        operar = self.fase in (
+            FaseUI.PRONTO,
+            FaseUI.PENDENTE_SANITIZE,
+            FaseUI.PENDENTE_RECONSTRUCT,
+        )
+        if operar == self._barra_operacao:
+            return
+        self._barra_operacao = operar
+        self._animar_barra(operar)
+
+    def _largura_util_barra(self) -> int:
+        barra = self.txt_questions.parentWidget()
+        lay = barra.layout()
+        if lay is None:
+            return max(80, barra.width())
+        m = lay.contentsMargins()
+        return max(80, barra.width() - m.left() - m.right())
+
+    def _animar_barra(self, operar: bool) -> None:
+        """Campo e Enter somem enquanto os botões crescem — sem corte seco."""
+        self._barra_geracao += 1
+        geracao = self._barra_geracao
+        if self._barra_grupo is not None:
+            antigo = self._barra_grupo
+            self._barra_grupo = None
+            antigo.blockSignals(True)
+            antigo.stop()
+            antigo.deleteLater()
+
+        self._margem_botoes(operar)
+        self._aplicar_faixa()
+        if operar:
+            self.txt_questions.setVisible(True)
+            self.btn_send.setVisible(True)
+            self.btn_unmask.setVisible(True)
+            self.btn_past.setVisible(self.modo == ModoUI.MASK)
+        else:
+            self.txt_questions.setVisible(True)
+            self.btn_send.setVisible(True)
+            self.txt_questions.setMaximumWidth(0)
+            self._questions_opacidade.setOpacity(0.0)
+            self.btn_send.setMaximumWidth(0)
+            self._send_opacidade.setOpacity(0.0)
+
+        grupo = QParallelAnimationGroup(self)
+        duracao = 280
+        curva = QEasingCurve.Type.InOutCubic
+
+        def largura(widget: QWidget, destino: int) -> None:
+            atual = widget.maximumWidth()
+            if atual >= 16777215:
+                atual = max(widget.width(), 0)
+            anim = QPropertyAnimation(widget, b"maximumWidth", grupo)
+            anim.setDuration(duracao)
+            anim.setStartValue(atual)
+            anim.setEndValue(destino)
+            anim.setEasingCurve(curva)
+            grupo.addAnimation(anim)
+
+        def altura(widget: QWidget, destino: int) -> None:
+            for prop in (b"minimumHeight", b"maximumHeight"):
+                anim = QPropertyAnimation(widget, prop, grupo)
+                anim.setDuration(duracao)
+                anim.setStartValue(widget.height())
+                anim.setEndValue(destino)
+                anim.setEasingCurve(curva)
+                grupo.addAnimation(anim)
+
+        def opacidade(efeito: QGraphicsOpacityEffect, destino: float) -> None:
+            anim = QPropertyAnimation(efeito, b"opacity", grupo)
+            anim.setDuration(duracao)
+            anim.setStartValue(efeito.opacity())
+            anim.setEndValue(destino)
+            anim.setEasingCurve(curva)
+            grupo.addAnimation(anim)
+
+        mostrar_mask = operar and self.modo == ModoUI.MASK
+        util = self._largura_util_barra()
+        espaco = 6
+        lay = self.txt_questions.parentWidget().layout()
+        if lay is not None:
+            espaco = lay.spacing()
+        if operar:
+            n = 2 if mostrar_mask else 1
+            vão = T.ENTRE_BOTOES if mostrar_mask else 0
+            alvo = max(80, (util - espaco * (n - 1) - vão) // n)
+            destino_mask = alvo if mostrar_mask else 0
+            destino_unmask = alvo
+            destino_campo = 0
+            destino_send = 0
+            destino_vão = vão
+        else:
+            destino_mask = 0
+            destino_unmask = 0
+            destino_campo = max(80, util - self.btn_send._lado - espaco)
+            destino_send = self.btn_send._lado
+            destino_vão = 0
+        opacidade(self._questions_opacidade, 0.0 if operar else 1.0)
+        opacidade(self._send_opacidade, 0.0 if operar else 1.0)
+        largura(self.txt_questions, destino_campo)
+        largura(self.btn_send, destino_send)
+        opacidade(self._past_opacidade, 1.0 if mostrar_mask else 0.0)
+        largura(self.btn_past, destino_mask)
+        opacidade(self._unmask_opacidade, 1.0 if operar else 0.0)
+        largura(self.entre_botoes, destino_vão)
+        largura(self.btn_unmask, destino_unmask)
+        altura(self._folga_baixo, T.FOLGA_BOTOES if operar else T.FOLGA_SETUP)
+
+        def _fim() -> None:
+            if geracao != self._barra_geracao:
+                return
+            if operar:
+                self.txt_questions.setVisible(False)
+                self.btn_send.setVisible(False)
+                self.txt_questions.setMaximumWidth(0)
+                self.btn_send.setMaximumWidth(0)
+                if not mostrar_mask:
+                    self.btn_past.setVisible(False)
+                    self.btn_past.setMaximumWidth(0)
+            else:
+                self.btn_past.setVisible(False)
+                self.btn_unmask.setVisible(False)
+                self.btn_past.setMaximumWidth(0)
+                self.btn_unmask.setMaximumWidth(0)
+                self.entre_botoes.setMaximumWidth(0)
+                self.txt_questions.setMaximumWidth(destino_campo)
+                self.btn_send.setMaximumWidth(self.btn_send._lado)
+            self._folga_baixo.setFixedHeight(
+                T.FOLGA_BOTOES if operar else T.FOLGA_SETUP
+            )
+            if operar:
+                self._fonte_botoes()
+
+        grupo.finished.connect(_fim)
+        self._barra_grupo = grupo
+        grupo.start()
+
+    def _animar_so_mask(self) -> None:
+        """Troca Mask/Redactor com a barra já em botões: só o botão Mask entra ou sai."""
+        mostrar = self.modo == ModoUI.MASK
+        self._mask_geracao += 1
+        geracao = self._mask_geracao
+        self.btn_past.setVisible(True)
+        if self._mask_grupo is not None:
+            antigo = self._mask_grupo
+            self._mask_grupo = None
+            antigo.blockSignals(True)
+            antigo.stop()
+            antigo.deleteLater()
+        grupo = QParallelAnimationGroup(self)
+        duracao = 220
+        curva = QEasingCurve.Type.InOutCubic
+        util = self._largura_util_barra()
+        espaco = 6
+        lay = self.txt_questions.parentWidget().layout()
+        if lay is not None:
+            espaco = lay.spacing()
+        if mostrar:
+            alvo = max(80, (util - espaco - T.ENTRE_BOTOES) // 2)
+            fim_mask = alvo
+            fim_unmask = alvo
+            fim_vão = T.ENTRE_BOTOES
+        else:
+            fim_mask = 0
+            fim_unmask = util
+            fim_vão = 0
+
+        def _trilho(widget: QWidget, destino: int) -> None:
+            atual = widget.maximumWidth()
+            if atual >= 16777215:
+                atual = max(widget.width(), 0)
+            anim = QPropertyAnimation(widget, b"maximumWidth", grupo)
+            anim.setDuration(duracao)
+            anim.setStartValue(atual)
+            anim.setEndValue(destino)
+            anim.setEasingCurve(curva)
+            grupo.addAnimation(anim)
+
+        _trilho(self.btn_past, fim_mask)
+        _trilho(self.entre_botoes, fim_vão)
+        _trilho(self.btn_unmask, fim_unmask)
+        opacidade = QPropertyAnimation(self._past_opacidade, b"opacity", grupo)
+        opacidade.setDuration(duracao)
+        opacidade.setStartValue(self._past_opacidade.opacity())
+        opacidade.setEndValue(1.0 if mostrar else 0.0)
+        opacidade.setEasingCurve(curva)
+        grupo.addAnimation(opacidade)
+
+        def _fim() -> None:
+            if geracao != self._mask_geracao:
+                return
+            if not mostrar:
+                self.btn_past.setVisible(False)
+                self.btn_past.setMaximumWidth(0)
+
+        grupo.finished.connect(_fim)
+        self._mask_grupo = grupo
+        grupo.start()
+
+    def _feedback_click(self, efeito: QGraphicsOpacityEffect, slot: str) -> None:
         """Micro-animação no clique: pulso de opacidade (sem glow)."""
-        if self._past_anim is not None:
-            self._past_anim.stop()
-        anim = QPropertyAnimation(self._past_opacidade, b"opacity", self)
+        atual = getattr(self, slot)
+        if atual is not None:
+            atual.stop()
+        anim = QPropertyAnimation(efeito, b"opacity", self)
         anim.setDuration(180)
         anim.setStartValue(1.0)
         anim.setKeyValueAt(0.35, 0.55)
         anim.setEndValue(1.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._past_anim = anim
+        setattr(self, slot, anim)
         anim.start()
 
     def _on_past_input(self) -> None:
-        self._feedback_past_click()
+        self._feedback_click(self._past_opacidade, "_past_anim")
         if self.modo == ModoUI.REDACTOR:
-            self._on_past_report()
             return
         if self.fase == FaseUI.BURN:
             self._falar(D.MSG_BURN, mostrar_decisao=True)
             return
         # PAST INPUT livre quantas vezes quiser após o eng pronto
         # (também com rodada pendente — a nova substitui a anterior).
-        if self.fase not in (FaseUI.PRONTO, FaseUI.PENDENTE_SANITIZE):
+        if self.fase not in (
+            FaseUI.PRONTO,
+            FaseUI.PENDENTE_SANITIZE,
+            FaseUI.PENDENTE_RECONSTRUCT,
+        ):
             self._aviso_e_voltar(D.MSG_SETUP_THEN_PAST_INPUT)
             return
         if not self.life.sessao:
@@ -672,12 +1041,7 @@ class RacoonWindow(QMainWindow):
             return
 
         # Nova cola com pendente aberto → descarta rascunho da rodada anterior
-        if self.fase == FaseUI.PENDENTE_SANITIZE and self.pendente:
-            if self.pendente.teve_sensivel:
-                self.sanitizer.descartar_rodada(
-                    self.life.sessao.repo, self.pendente
-                )
-            self.pendente = None
+        self._descartar_pendentes()
 
         # Scan no clipboard → uma passagem do Racoon pensando
         self.avatar.pensar()
@@ -810,8 +1174,13 @@ class RacoonWindow(QMainWindow):
         self.fase = FaseUI.PRONTO
         self._falar(D.MSG_CANCELLED)
 
+    def _on_unmask(self) -> None:
+        """Mesmo caminho do Mask: clipboard → tabela → ACEPT copia o real."""
+        self._feedback_click(self._unmask_opacidade, "_unmask_anim")
+        self._on_past_report()
+
     def _on_past_report(self) -> None:
-        """Clipboard de relatório → preview invertido; ACEPT copia o real."""
+        """Clipboard com placeholder → preview invertido; ACEPT copia o real."""
         if not self._eng_pronto():
             self._aviso_e_voltar(D.MSG_REDACTOR_SEM_ENG)
             return

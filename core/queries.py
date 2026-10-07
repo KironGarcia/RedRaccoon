@@ -23,7 +23,7 @@ LINHAS_SUSPEITAS_SCAN = 8
 
 MSG_SCAN_NO_QUESTIONS = (
     "Looks like you tried to paste a scan into this chat box.\n"
-    "That option isn't valid — please use the PAST INPUT button."
+    "That option isn't valid — please use Mask sensitive input."
 )
 
 # Campos aceitos na lista confidencial (email= no início — contatos conhecidos do eng)
@@ -109,7 +109,7 @@ def _pedido_muito_longo(tamanho: int) -> PedidoQuery:
         mensagem_erro=(
             f"Too long ({tamanho} chars). "
             f"This box max is {LIMITE_CHARS}. "
-            "Split the confidential list or use PAST INPUT for scans."
+            "Split the confidential list or use Mask sensitive input for scans."
         ),
     )
 

@@ -19,7 +19,10 @@ MSG_CONFIDENTIAL_FORMAT = (
     "Type 'done' to leave blank."
 )
 
-MSG_READY = "Ready to start — paste your first input to mask when you want."
+MSG_READY = (
+    "Ready.\n"
+    "Copy a scan, then Mask sensitive input."
+)
 
 MSG_WELCOME_REDACTOR = (
     "Redactor mode. Paste the report text with placeholders — "
@@ -34,9 +37,9 @@ MSG_REDACTOR_SEM_ENG = (
 )
 
 MSG_REDACTOR_SCAN_CRU = (
-    "That looks like a raw scan, not a masked report.\n"
-    "In this mode I reconstruct placeholders — I don't sanitize.\n"
-    "Switch to Mask for that."
+    "That looks like a raw scan, not a masked reply.\n"
+    "Use Mask sensitive input for that.\n"
+    "Unmask is for text that already has placeholders."
 )
 
 MSG_REDACTOR_SEM_PLACEHOLDER = (
@@ -52,24 +55,21 @@ MSG_REDACTOR_NO_LLM = (
 
 MSG_QUESTIONS_USE_PAST_REPORT = (
     "Looks like a long text in this box.\n"
-    "Use the PAST REPORT button for that.\n"
-    "\n"
-    "Reconstructing a command or checking one placeholder?\n"
-    "Switch to Mask — Questions there is for small reconstructs."
+    "After setup, use Unmask model output for that."
 )
 
 MSG_CLIPBOARD_EMPTY_REPORT = (
-    "Clipboard is empty. Copy the report text first, then PAST REPORT."
+    "Clipboard is empty. Copy the model output first, then Unmask model output."
 )
 
 MSG_COPIED_REPORT = (
     "Copied to clipboard.\n"
-    "That's the report with real values — wording untouched."
+    "Real values are back — paste it in the terminal."
 )
 
-MSG_SETUP_THEN_PAST_REPORT = "Finish setup first, then use PAST REPORT."
+MSG_SETUP_THEN_PAST_REPORT = "Finish setup first, then use Unmask model output."
 
-MSG_SETUP_THEN_PAST_INPUT = "Finish setup first, then use PAST INPUT."
+MSG_SETUP_THEN_PAST_INPUT = "Finish setup first, then use Mask sensitive input."
 
 MSG_NO_SENSITIVE = (
     "No sensitive data found. Safe to share.\n"
@@ -77,19 +77,15 @@ MSG_NO_SENSITIVE = (
 )
 
 MSG_COPIED = (
-    "Copied to clipboard.\n\n"
-    "Need the real values back?\n"
-    "  If a model suggested a command, type:\n"
-    "    cmd <command with TARGET_* / PERSON_*>\n"
-    "  That rebuilds it with the real information.\n"
-    "  lookup PLACEHOLDER → show one real value\n"
-    "\n"
-    "Or paste a new scan in PAST INPUT for a new mask."
+    "Copied to clipboard.\n"
+    "Paste it in the model."
 )
 
 MSG_CANCELLED = "Round discarded. Nothing copied."
 
-MSG_CLIPBOARD_EMPTY = "Clipboard is empty. Copy scan output first, then PAST INPUT."
+MSG_CLIPBOARD_EMPTY = (
+    "Clipboard is empty. Copy the scan first, then Mask sensitive input."
+)
 
 MSG_NEED_ENGAGEMENT = "No active engagement. Tell me the workspace name to begin."
 
@@ -185,9 +181,7 @@ def formatar_resumo(resumo: list[dict]) -> str:
     return (
         "Sanitization preview:\n"
         + "\n".join(linhas)
-        + "\n\n"
-        + MSG_CALIBRATION
-        + "\nACEPT to copy / CANCEL to discard."
+        + "\n\nACEPT to copy / CANCEL to discard."
     )
 
 
