@@ -22,6 +22,8 @@ RE_EMAIL = re.compile(
 )
 # UPN / BloodHound principal (user@AD.LOCAL) — NÃO é e-mail SMTP
 TLD_UPN_AD = (".local", ".lan", ".internal", ".corp", ".intranet")
+# Sufixo de lab / rede que não é TLD público. Classe, não nome de cliente.
+SUFIXO_LAB = (".htb", ".thm")
 RE_URL = re.compile(
     r"https?://[^\s<>\"']+",
     re.IGNORECASE,
@@ -85,6 +87,17 @@ RE_SAM_HASH = re.compile(
 # Inclui o prefixo 0x no span quando presente
 RE_HEX_SECRET = re.compile(
     r"\b(0x[0-9a-fA-F]{32,}|[0-9a-fA-F]{32,})\b"
+)
+# hashcat cracked / potfile: hash:senha. A senha da direita não parece senha sozinha.
+RE_HASHCAT_CRACK = re.compile(
+    r"(?m)^(?:[0-9a-fA-F]{32,}|\$[./A-Za-z0-9$]{20,}):([^\s:]{4,128})\s*$"
+)
+# crypt: bcrypt ($2y$10$...) e $1$/$5$/$6$. Não é hex — o $ impede o RE_HEX_SECRET.
+RE_CRYPT_HASH = re.compile(
+    r"\$(?:2[abxy])\$\d{2}\$[./A-Za-z0-9]{53}"
+    r"|\$6\$(?:rounds=\d+\$)?[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{86}"
+    r"|\$5\$(?:rounds=\d+\$)?[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{43}"
+    r"|\$1\$[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{22}"
 )
 # Responder / ntlmrelayx: user::DOMAIN:challenge:ntproof:blob
 RE_NTLMv2_HASH = re.compile(
@@ -196,6 +209,27 @@ RE_ENV_USERNAME = re.compile(
     r"(?im)^[A-Z][A-Z0-9_]*(?:USERNAME|_USER)\s*=\s*"
     r"([A-Za-z][A-Za-z0-9._-]{2,64})\s*$"
 )
+# PHP: $db_username = 'conta'. O irmão $db_password já entra em RE_PASS_LABEL.
+RE_PHP_VAR_USER = re.compile(
+    r"""(?i)\$[A-Za-z_][A-Za-z0-9_]*user(?:name)?\s*=\s*"""
+    r"""['"]([A-Za-z][A-Za-z0-9._-]{2,64})['"]"""
+)
+# Stanza do manager: [conta] na linha de cima de secret =. [general] é rótulo.
+RE_AMI_STANZA = re.compile(
+    r"(?m)^\[([A-Za-z0-9_./-]{3,64})\][ \t]*\r?\n[ \t]*secret\s*="
+)
+# PASSWORD= no começo da linha não cobre isso. BYPASS não é senha.
+RE_PHP_ARRAY_ASSIGN = re.compile(
+    r"""(?i)\[['\"]([A-Za-z0-9_]+)['\"]\]\s*=\s*['\"]([^'\"]+)['\"]"""
+)
+_PHP_CHAVE_SEGREDO = re.compile(
+    r"(?i)(?:(?<!BY)PASS(?:WORD|WD)?|SECRET|PSK|TOKEN)$"
+)
+_PHP_CHAVE_USUARIO = re.compile(r"(?i)USER(?:NAME)?$")
+# JSON do PM2: "SERVER_TOKEN":"valor". A chave manda. UUID não parece senha sozinho.
+RE_JSON_KV = re.compile(
+    r'(?i)"([A-Za-z0-9_]+)"\s*:\s*"([^"]+)"'
+)
 # smtp-user-enum: "IP: login exists"
 RE_SMTP_USER_EXISTS = re.compile(
     r"(?m)^[^\s:][\w.:]*:\s*([A-Za-z][A-Za-z0-9._-]{2,64})\s+exists\b"
@@ -245,6 +279,17 @@ RE_SLASH_FLAG_PASS = re.compile(
 RE_PASS_LABEL = re.compile(
     r"(?i)(?:^|[\s_])(?:password|passwd|pwd|secret|psk)\s*[:=]\s*['\"]?([^\s'\"]+)"
 )
+# pdftotext: o rótulo fica numa linha e o valor na seguinte
+RE_PASS_LABEL_LINHA = re.compile(
+    r"(?im)^(?:password|passwd|pwd|secret|psk)\s*:\s*\n+\s*(\S+)\s*$"
+)
+# Ficha: Employee:\nNome Sobrenome. O sobrenome não pode ficar em claro.
+RE_FICHA_EMPREGADO = re.compile(
+    r"(?im)^Employee:\s*\n+\s*"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+)"
+    r"\s+"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+)\s*$"
+)
 # Comentário SMB: jsilva / TempPass!99  (exige espaços — não pega SPN MSSQLSvc/host)
 RE_USER_SLASH_PASS = re.compile(
     r"(?i)\b([A-Za-z][A-Za-z0-9._-]{2,32})\s+/\s+([^\s\"'{}]{4,64})"
@@ -274,6 +319,34 @@ RE_META_AUTHOR_NOME = re.compile(
 RE_CERT_ST = re.compile(
     r"\bST\s*=\s*([A-Za-z][A-Za-z ]{1,40}?)(?=,|\s*$)"
 )
+# nmap ssl-cert: valor de commonName no Subject é host do alvo.
+# Issuer (CA) fica de fora — a classe é o rótulo Subject, não a palavra.
+RE_NMAP_SUBJECT_CN = re.compile(
+    r"(?i)\bSubject:\s*commonName=(\*\.)?([A-Za-z0-9][A-Za-z0-9._-]{1,253})"
+)
+# Meterpreter sysinfo: o valor de Computer é o hostname curto do alvo.
+# O rótulo Computer fica. Não é o nome da máquina desta cola.
+RE_METERPRETER_COMPUTER = re.compile(
+    r"(?im)^Computer\s*:\s*([A-Za-z0-9][A-Za-z0-9._-]{1,253})"
+)
+# Valor de cookie de sessão. O nome (PHPSESSID, sessauth) é jargão e fica.
+# -del- tem 5 chars e não entra: é o marcador de apagar o cookie.
+RE_COOKIE_SESSAO = re.compile(
+    r"(?i)\b([A-Za-z0-9_.-]*(?:sess(?:ion)?id|sessauth)|connect\.sid)="
+    r"([^;\s]{8,})"
+)
+# user_id do set_env do Roundcube. Não é a conta da ficha.
+RE_RC_USER_ID = re.compile(
+    r'(?i)"user_id"\s*:\s*"([A-Za-z0-9]{8,})"'
+)
+# Token de formulário ou redirect: ?_token= e "request_token":"...".
+RE_URL_TOKEN = re.compile(
+    r"(?i)(?:[?&]_token=|\"request_token\"\s*:\s*\")([A-Za-z0-9]{16,})"
+)
+# Texto de um elemento id="key" — token da página, não o nome do cliente.
+RE_HTML_ID_KEY = re.compile(
+    r"(?i)\bid=[\"']key[\"'][^>]*>\s*([a-z0-9]{16,64})"
+)
 RE_NOME_LISTA_CARGO = re.compile(
     r"(?m)^[ \t]*"
     r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+"
@@ -287,11 +360,11 @@ RE_JSON_DISPLAYNAME = re.compile(
 RE_JSON_USERNAME = re.compile(
     r'(?i)"username"\s*:\s*"([A-Za-z][A-Za-z0-9._-]{1,64})"'
 )
-# Nome antes de <email>
+# Nome antes de <email@dominio>. O < de uma tag HTML não é e-mail.
 RE_NOME_ANTES_EMAIL = re.compile(
     r"([A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+"
     r"(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÀ][a-záéíóúâêôãõàç]+)+)"
-    r"\s*<"
+    r"\s*<[^>\s]+@[^>\s]+>"
 )
 # "Jose Silva Admin local HOST - pass"
 RE_NOME_ADMIN_LOCAL = re.compile(
@@ -598,7 +671,7 @@ ALLOW_TECNICO = re.compile(
     r"CVE-\d{4}-\d+"
     r"|Apache|nginx|OpenSSH|OpenSSL|MySQL|PostgreSQL|MongoDB"
     r"|WordPress|Drupal|Joomla|Tomcat|IIS|SMB|FTP|SSH|HTTP|HTTPS"
-    r"|DNS|SNMP|RDP|LDAP|Kerberos|Nmap|Metasploit|SQLMap"
+    r"|DNS|SNMP|RDP|LDAP|Kerberos|Nmap|Metasploit|Meterpreter|cronjobs?|SQLMap|AMI"
     r"|Python|PHP|Java|Node\.?js|React|Docker|Kubernetes"
     # Vendor / OS / serviços comuns em banner de scan (não são cliente)
     r"|Microsoft|Windows|Ubuntu|Linux|Debian|CentOS|Red\s*Hat|Fedora"
@@ -608,6 +681,8 @@ ALLOW_TECNICO = re.compile(
     r"|PORT|STATE|SERVICE|VERSION"
     # Jargão nmap / banner que Presidio confunde com PERSON
     r"|tcp\s+ports|udp\s+ports|ports"
+    # Transporte do rpcinfo e capability IMAP — o NER lê como ORG
+    r"|tcp6|udp6|tcp|udp|IMAP4rev\d+"
     r"|Jump\s+Gateway|Gateway"
     r"|Domain\s+Controller"
     r"|rootdse|ldap-rootdse|nbstat|kpasswd5"
@@ -683,6 +758,10 @@ ALLOW_TECNICO = re.compile(
     r"|Strict-Transport-Security|X-Powered-By|X-Internal-Host"
     r"|Content-Type|Content-Length|Content-Disposition|Content-Encoding"
     r"|Content-Language|Content-Security-Policy|Cache-Control"
+    # Roundcube: cache, cookie e pastas padrão do IMAP não são cliente
+    r"|post-check|pre-check|Max-Age"
+    r"|INBOX|Sent|Trash|Drafts|Junk|Spam|Webmail"
+    r"|NOTIFY|SPECIAL-USE|Logout"
     r"|Transfer-Encoding|Accept-Ranges|Accept-Encoding|Accept-Language"
     r"|Last-Modified|WWW-Authenticate|User-Agent|Set-Cookie|Keep-Alive"
     r"|X-Frame-Options|X-Content-Type-Options|X-XSS-Protection"
@@ -694,6 +773,13 @@ ALLOW_TECNICO = re.compile(
     r"|[KMGT]i?B(?:/s)?"
     r"|Control\s+Plane|Edge\s+Control"
     r"|[A-Z]{2,12}SESSID"
+    # HTML / UI que o NER confunde com pessoa. Produto e rótulo, não cliente.
+    r"|javascript|FreePBX|Sangoma"
+    # Vitrine HTML: o NER lê título, menu e botão como pessoa
+    r"|Support|Services?|Security|Compliance|Hardware|Cloud|Contact|About"
+    r"|Privacy|Terms|Documentation|Careers|Blog|Company|Resources|Europe"
+    r"|Helpdesk|Solutions|Analytics|Reporting|Maintenance|Infrastructure"
+    r"|Apply\s+Config|User\s+Control\s+Panel|Operator\s+Panel|Get\s+Support"
     r")\b",
     re.IGNORECASE,
 )
@@ -874,13 +960,19 @@ class Sanitizer:
             if not self._token_mapeavel(valor, tipo):
                 continue
             for m in re.finditer(re.escape(valor), texto, flags=re.IGNORECASE):
-                if tipo in {"ORG", "PERSON"} and self._eh_prefixo_de_fqdn(
-                    texto, m.end()
+                if tipo in {"ORG", "PERSON", "USER"} and self._label_de_host_lab(
+                    texto, m.start(), m.end()
+                ):
+                    continue
+                if tipo in {"ORG", "PERSON", "USER"} and self._eh_nome_de_cookie(
+                    texto, m.start(), m.end()
                 ):
                     continue
                 if tipo in {"ORG", "PERSON"} and self._eh_nome_de_header_http(
                     texto, m.start(), m.end()
                 ):
+                    continue
+                if self._eh_titulo_produto_manager(texto, m.start(), m.end()):
                     continue
                 achados.append(
                     Achado(
@@ -935,7 +1027,13 @@ class Sanitizer:
                 continue
             if not self._token_mapeavel(valor, tipo):
                 continue
-            if tipo == "IP" and valor in IPV4_NAO_MASCARAR:
+            if tipo == "IP" and (
+                valor in IPV4_NAO_MASCARAR or valor.startswith("0.0.0.0")
+            ):
+                continue
+            if tipo == "PERSON" and re.search(
+                r"(?i)\b(?:interface|generated)\b", valor
+            ):
                 continue
             if ALLOW_TECNICO.search(valor) or self._na_allow_lista(valor, eng):
                 continue
@@ -945,13 +1043,19 @@ class Sanitizer:
                 else 0
             )
             for m in re.finditer(re.escape(valor), texto, flags=flags):
-                if tipo in {"ORG", "PERSON"} and self._eh_prefixo_de_fqdn(
-                    texto, m.end()
+                if tipo in {"ORG", "PERSON", "USER"} and self._label_de_host_lab(
+                    texto, m.start(), m.end()
+                ):
+                    continue
+                if tipo in {"ORG", "PERSON", "USER"} and self._eh_nome_de_cookie(
+                    texto, m.start(), m.end()
                 ):
                     continue
                 if tipo in {"ORG", "PERSON"} and self._eh_nome_de_header_http(
                     texto, m.start(), m.end()
                 ):
+                    continue
+                if self._eh_titulo_produto_manager(texto, m.start(), m.end()):
                     continue
                 achados.append(
                     Achado(
@@ -1040,6 +1144,66 @@ class Sanitizer:
         return resto.startswith(":") or resto.startswith(" :")
 
     @staticmethod
+    def _eh_versao_software(texto: str, start: int, end: int) -> bool:
+        """Quad ponto a ponto que é versão de produto, não endereço IP."""
+        antes = texto[max(0, start - 32) : start]
+        if re.search(r"(?i)(?:load_)?version=$", antes):
+            return True
+        depois = texto[end : end + 16]
+        return bool(re.search(r"(?i)^ is licensed\b", depois))
+
+    @staticmethod
+    def _span_em_markup(texto: str, start: int, end: int) -> bool:
+        """Dentro de tag, <script> ou <style>. NER aqui come CSS, MIME e JS."""
+        lt = texto.rfind("<", 0, start)
+        gt = texto.rfind(">", 0, start)
+        if lt > gt:
+            return True
+        baixo = texto.lower()
+        for marca in ("script", "style"):
+            abre = baixo.rfind(f"<{marca}", 0, start)
+            fecha = baixo.rfind(f"</{marca}", 0, start)
+            if abre != -1 and abre > fecha:
+                return True
+        return False
+
+    @staticmethod
+    def _em_linha_hashcat(texto: str, start: int) -> bool:
+        """True na linha de status do hashcat ou no banner OpenCL/PoCL."""
+        ini = texto.rfind("\n", 0, start) + 1
+        fim = texto.find("\n", start)
+        if fim < 0:
+            fim = len(texto)
+        linha = texto[ini:fim]
+        if re.search(r"(?i)OpenCL|PoCL", linha):
+            return True
+        return bool(re.search(r"\.{2,}\s*:", linha))
+
+    @staticmethod
+    def _em_comentario_linha(texto: str, start: int) -> bool:
+        """True se o span está depois de // na mesma linha (comentário PHP/JS)."""
+        ini = texto.rfind("\n", 0, start) + 1
+        return "//" in texto[ini:start]
+
+    @staticmethod
+    def _em_corpo_html(texto: str, start: int) -> bool:
+        """Texto visível da página. NER aqui chama menu e título de pessoa."""
+        baixo = texto.lower()
+        abre = baixo.rfind("<body", 0, start)
+        if abre == -1:
+            return False
+        fecha = baixo.rfind("</body", 0, start)
+        return abre > fecha
+
+    @staticmethod
+    def _eh_nome_de_cookie(texto: str, start: int, end: int) -> bool:
+        """Nome do cookie (Set-Cookie: nome=) não é pessoa. O valor é outra classe."""
+        if end >= len(texto) or texto[end] != "=":
+            return False
+        janela = texto[max(0, start - 80) : start]
+        return bool(re.search(r"(?i)set-cookie:\s*$", janela))
+
+    @staticmethod
     def _normalizar_span_dominio(valor: str) -> str:
         """Tira *. e ponto à esquerda — senão *.nyxlynx.io vira *TARGET_DOMAIN."""
         v = (valor or "").strip()
@@ -1051,6 +1215,19 @@ class Sanitizer:
         """True se o match é só o label (NyxLynx) e o texto segue como host (.internal)."""
         return 0 <= fim < len(texto) and texto[fim] == "."
 
+    def _label_de_host_lab(self, texto: str, inicio: int, fim: int) -> bool:
+        """True se o valor é só o primeiro label de um FQDN com TLD de lab."""
+        if not self._eh_prefixo_de_fqdn(texto, fim):
+            return False
+        return self._sufixo_lab(self._token_ao_redor(texto, inicio, fim))
+
+    def _sufixo_lab(self, valor: str) -> bool:
+        """FQDN cujo TLD não é público (lab). O nome do host não entra no fonte."""
+        v = (valor or "").lower().strip().strip(".")
+        if not v or self._dominio_publico(v):
+            return False
+        return any(v.endswith(s) for s in SUFIXO_LAB)
+
     def _dominio_do_cliente(
         self, valor: str, eng: dict[str, Any] | None
     ) -> bool:
@@ -1058,7 +1235,7 @@ class Sanitizer:
         v = (valor or "").lower().strip().strip(".")
         if not v:
             return False
-        if v.endswith((".local", ".lan", ".internal", ".corp", ".intranet")):
+        if v.endswith(TLD_UPN_AD) or v.endswith(SUFIXO_LAB):
             return True
         conhecidos: list[str] = []
         for d in (eng or {}).get("domains") or []:
@@ -1218,6 +1395,9 @@ class Sanitizer:
         # AWS secret é base64 com / no meio: NÃO recusar só por ter barra.
         if s.startswith(("-", "/", "./", "../")) or "\\" in s or "://" in s:
             return False
+        # Tag HTML (</div>) não é senha. O replace global derruba a página.
+        if re.fullmatch(r"</?[A-Za-z][A-Za-z0-9]*\s*>", s):
+            return False
         if re.match(r"^(/[A-Za-z0-9._-]+){2,}$", s):
             return False
         # secretsdump: rid:lmhash:nthash::: — não é senha única
@@ -1320,6 +1500,14 @@ class Sanitizer:
                 candidatos.append(u)
         for m in RE_ENV_USERNAME.finditer(texto):
             _add(m.group(1))
+        for m in RE_PHP_VAR_USER.finditer(texto):
+            _add(m.group(1))
+        for m in RE_PHP_ARRAY_ASSIGN.finditer(texto):
+            if _PHP_CHAVE_USUARIO.search(m.group(1)):
+                _add(m.group(2))
+        for m in RE_JSON_KV.finditer(texto):
+            if _PHP_CHAVE_USUARIO.search(m.group(1)):
+                _add(m.group(2))
 
         # Dump mysql.user / módulo mysql_sql (login na 1ª coluna)
         if re.search(r"(?i)\bmysql\.user\b|\bmysql_sql\b", texto):
@@ -1331,6 +1519,8 @@ class Sanitizer:
             for m in re.finditer(
                 rf"\b{re.escape(user)}\b", texto, flags=re.IGNORECASE
             ):
+                if self._eh_titulo_produto_manager(texto, m.start(), m.end()):
+                    continue
                 achados.append(
                     Achado(
                         real_value=texto[m.start() : m.end()],
@@ -1387,11 +1577,25 @@ class Sanitizer:
             if self._parece_senha(s) or self._eh_password_cliente(s):
                 _add_senha(s)
 
+        for m in RE_PASS_LABEL_LINHA.finditer(texto):
+            _add_senha(m.group(1))
+
+        for m in RE_HASHCAT_CRACK.finditer(texto):
+            _add_senha(m.group(1))
+
         for m in RE_ENV_SECRET.finditer(texto):
             nome, valor = m.group(1), m.group(2).strip().strip("'\"")
             if not valor:
                 continue
             _add_senha(valor)
+
+        for m in RE_PHP_ARRAY_ASSIGN.finditer(texto):
+            if _PHP_CHAVE_SEGREDO.search(m.group(1)):
+                _add_senha(m.group(2))
+
+        for m in RE_JSON_KV.finditer(texto):
+            if _PHP_CHAVE_SEGREDO.search(m.group(1)):
+                _add_senha(m.group(2))
 
         for m in RE_USER_SLASH_PASS.finditer(texto):
             s = m.group(2)
@@ -1474,6 +1678,9 @@ class Sanitizer:
             base = m.start(2)
             _add(base + hm.start(1), base + hm.end(1))
             _add(base + hm.start(2), base + hm.end(2))
+
+        for m in RE_CRYPT_HASH.finditer(texto):
+            _add(m.start(), m.end())
 
         for m in RE_HEX_SECRET.finditer(texto):
             val = m.group(1)
@@ -1558,6 +1765,9 @@ class Sanitizer:
 
         for m in RE_FULL_NAME_FIELD.finditer(texto):
             _considerar(m.group(1))
+        for m in RE_FICHA_EMPREGADO.finditer(texto):
+            _considerar(m.group(1))
+            _considerar(m.group(2))
         for m in RE_NOME_LISTA_CARGO.finditer(texto):
             _considerar(m.group(1))
         for m in RE_JSON_DISPLAYNAME.finditer(texto):
@@ -1594,8 +1804,17 @@ class Sanitizer:
             ip = m.group()
             if ip in IPV4_NAO_MASCARAR:
                 continue
+            if self._eh_versao_software(texto, m.start(), m.end()):
+                continue
             achados.append(
                 Achado(ip, "IP", m.start(), m.end(), "regex")
+            )
+        for m in RE_AMI_STANZA.finditer(texto):
+            nome = m.group(1)
+            if nome.casefold() == "general":
+                continue
+            achados.append(
+                Achado(nome, "USER", m.start(1), m.end(1), "regex")
             )
         for m in RE_IP_MYSQL_CURINGA.finditer(texto):
             achados.append(
@@ -1691,8 +1910,9 @@ class Sanitizer:
                 continue
             if not self._dominio_do_cliente(host, eng):
                 continue
+            tipo_host = "HOST" if self._sufixo_lab(host) else "DOMAIN"
             achados.append(
-                Achado(host, "DOMAIN", m.start(), m.end(), "regex")
+                Achado(host, tipo_host, m.start(), m.end(), "regex")
             )
         # API keys / tokens (lista fixa — sempre mascarar)
         for m in RE_APIKEY.finditer(texto):
@@ -1714,23 +1934,70 @@ class Sanitizer:
             baixo = val.lower()
             if any(baixo.endswith(ext) for ext in EXTENSOES_NAO_DOMINIO):
                 continue
-            interno = baixo.endswith(
-                (".local", ".lan", ".internal", ".corp", ".intranet")
-            )
+            interno = baixo.endswith(TLD_UPN_AD)
             if interno or self._dominio_do_cliente(val, eng):
                 grupo = m.group()
                 idx = grupo.lower().find(val.lower())
                 if idx < 0:
                     continue
+                tipo_host = "HOST" if self._sufixo_lab(val) else "DOMAIN"
                 achados.append(
                     Achado(
                         val,
-                        "DOMAIN",
+                        tipo_host,
                         m.start() + idx,
                         m.start() + idx + len(val),
                         "regex",
                     )
                 )
+        for m in RE_NMAP_SUBJECT_CN.finditer(texto):
+            val = m.group(2)
+            if not val or self._eh_lixo(val) or self._dominio_publico(val):
+                continue
+            if ALLOW_TECNICO.search(val):
+                continue
+            if any(val.lower().endswith(ext) for ext in EXTENSOES_NAO_DOMINIO):
+                continue
+            achados.append(
+                Achado(val, "HOST", m.start(2), m.end(2), "regex")
+            )
+        for m in RE_METERPRETER_COMPUTER.finditer(texto):
+            val = m.group(1)
+            if not val or self._eh_lixo(val) or self._dominio_publico(val):
+                continue
+            if ALLOW_TECNICO.search(val):
+                continue
+            achados.append(
+                Achado(val, "HOST", m.start(1), m.end(1), "regex")
+            )
+        for m in RE_COOKIE_SESSAO.finditer(texto):
+            val = m.group(2)
+            if not val or self._eh_lixo(val):
+                continue
+            achados.append(
+                Achado(val, "APIKEY", m.start(2), m.end(2), "regex")
+            )
+        for m in RE_URL_TOKEN.finditer(texto):
+            val = m.group(1)
+            if not val or self._eh_lixo(val):
+                continue
+            achados.append(
+                Achado(val, "APIKEY", m.start(1), m.end(1), "regex")
+            )
+        for m in RE_RC_USER_ID.finditer(texto):
+            val = m.group(1)
+            if not val or self._eh_lixo(val):
+                continue
+            achados.append(
+                Achado(val, "APIKEY", m.start(1), m.end(1), "regex")
+            )
+        for m in RE_HTML_ID_KEY.finditer(texto):
+            val = m.group(1)
+            if not val or self._eh_lixo(val):
+                continue
+            achados.append(
+                Achado(val, "APIKEY", m.start(1), m.end(1), "regex")
+            )
         achados.extend(self._achados_usernames(texto, eng))
         achados.extend(self._achados_senhas(texto))
         achados.extend(self._achados_hashes_secrets(texto))
@@ -1747,6 +2014,12 @@ class Sanitizer:
             return False
         dominio = e.rsplit("@", 1)[-1]
         return any(dominio.endswith(tld) for tld in TLD_UPN_AD)
+
+    def _eh_titulo_produto_manager(self, texto: str, start: int, end: int) -> bool:
+        """'Asterisk Manager' no cabeçalho do AMI é o produto, não a conta."""
+        if texto[start:end].casefold() != "asterisk":
+            return False
+        return bool(re.match(r"(?i)\s+manager\b", texto[end : end + 16]))
 
     @staticmethod
     def _host_de_url(url: str) -> str | None:
@@ -1792,9 +2065,24 @@ class Sanitizer:
             # NER não pode atravessar linha (whois Name + Organization)
             if "\n" in trecho:
                 continue
+            if self._span_em_markup(texto, r.start, r.end):
+                continue
+            if tipo in {"PERSON", "ORG"} and self._em_corpo_html(texto, r.start):
+                continue
             if not self._token_mapeavel(trecho, tipo):
                 continue
-            if self._parece_senha(trecho):
+            if tipo == "IP" and (
+                trecho in IPV4_NAO_MASCARAR or trecho.startswith("0.0.0.0")
+            ):
+                continue
+            if tipo == "PERSON" and trecho.casefold() == "asterisk":
+                depois = texto[r.end : r.end + 16]
+                if re.match(r"(?i)\s+manager\b", depois):
+                    continue
+            if tipo == "PERSON" and re.search(
+                r"(?i)manager\s+interface|generated\s+at",
+                texto[max(0, r.start - 40) : r.end + 8],
+            ):
                 continue
             if ALLOW_TECNICO.search(trecho):
                 continue
@@ -1805,6 +2093,16 @@ class Sanitizer:
                 continue
             # Chave de .env / dump PHP — não é nome de pessoa
             if tipo == "PERSON" and re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", trecho):
+                continue
+            # Comentário // e nome de variável ($lang) não são pessoa nem empresa
+            if tipo in {"PERSON", "ORG"} and (
+                "//" in trecho or self._em_comentario_linha(texto, r.start)
+            ):
+                continue
+            # Status do hashcat e banner OpenCL: Keyspace, Blowfish, RELOC
+            if tipo in {"PERSON", "ORG"} and self._em_linha_hashcat(texto, r.start):
+                continue
+            if tipo in {"PERSON", "ORG"} and r.start > 0 and texto[r.start - 1] == "$":
                 continue
             if re.search(
                 r"(?i)(?:\$_)?(?:ENV|SERVER|GET|POST|COOKIE|REQUEST)\s*\[",
@@ -1825,11 +2123,17 @@ class Sanitizer:
                 texto, r.start, r.end
             ):
                 continue
+            if tipo in {"PERSON", "ORG"} and self._eh_nome_de_cookie(
+                texto, r.start, r.end
+            ):
+                continue
             if tipo == "DOMAIN":
                 trecho = self._normalizar_span_dominio(trecho)
                 if not trecho:
                     continue
-            if tipo == "DOMAIN" and not self._dominio_do_cliente(trecho, eng):
+            if tipo == "DOMAIN" and self._sufixo_lab(trecho):
+                tipo = "HOST"
+            elif tipo == "DOMAIN" and not self._dominio_do_cliente(trecho, eng):
                 continue
             if self._eh_jargao_share_ou_rotulo(trecho):
                 continue
@@ -1858,6 +2162,8 @@ class Sanitizer:
                     continue
             # Presidio URL corta ticket.kirbi → ticket.ki (.ki = TLD); olha o token inteiro
             token_cheio = self._token_ao_redor(texto, r.start, r.end)
+            if tipo in {"PERSON", "ORG"} and self._sufixo_lab(token_cheio):
+                continue
             if tipo == "DOMAIN":
                 baixo_tok = token_cheio.lower()
                 if any(baixo_tok.endswith(ext) for ext in EXTENSOES_NAO_DOMINIO):
@@ -1953,6 +2259,9 @@ class Sanitizer:
             achados,
             key=lambda a: (
                 a.start,
+                # Segredo mais longo no mesmo ponto ganha do nome que é prefixo dele.
+                # Senão o nome ocupa o início e a fronteira não come o resto.
+                0 if a.entity_type in {"PASSWORD", "APIKEY"} else 1,
                 ordem_camada.get(a.camada, 9),
                 -len(a.real_value),
             ),
@@ -2099,9 +2408,22 @@ class Sanitizer:
                         flags=re.IGNORECASE,
                     )
                 else:
+                    def _troca(m: re.Match, _pholder: str = pholder) -> str:
+                        # "Asterisk Manager" é o título do produto.
+                        # A troca global não pode comer isso só porque a conta tem o mesmo texto.
+                        if (
+                            m.group().casefold() == "asterisk"
+                            and re.match(
+                                r"(?i)\s+manager\b",
+                                m.string[m.end() : m.end() + 16],
+                            )
+                        ):
+                            return m.group()
+                        return _pholder
+
                     texto_out = re.sub(
                         rf"(?<![A-Za-z0-9_]){re.escape(real)}(?![A-Za-z0-9_])",
-                        pholder,
+                        _troca,
                         texto_out,
                         flags=re.IGNORECASE,
                     )
