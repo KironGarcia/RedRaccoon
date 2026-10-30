@@ -47,3 +47,7 @@ RedRaccoon is in a tuning stage. The aim is to raise coverage and contact, and t
 RedRaccoon does not promise magic or absolute “zero leak”. It promises a fast, predictable intermediary with the pentester in control: mask what belongs to the client, leave intact what the AI needs in order to analyze (CVE, version, protocol), and restore the real world when the work asks for it.
 
 The product is in a **build and polish stage**. Next it moves to a tester phase — the moment to use it for real, find the rough edges, and sharpen it before any wider distribution.
+
+The video below shows the tool running in practice.
+
+[Watch it running](<https://www.youtube.com/watch?v=5IiXHpAxFxI>)
